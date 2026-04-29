@@ -26,7 +26,11 @@ services:
     environment:
       NODE_ENV:        production
       PORT:            3000
-      DATABASE_URL:    postgresql://familytracker:${DB_PASSWORD}@db:5432/familytracker
+      DB_HOST:         db
+      DB_PORT:         "5432"
+      DB_USER:         familytracker
+      DB_PASSWORD:     ${DB_PASSWORD}
+      DB_NAME:         familytracker
       JWT_SECRET:      ${JWT_SECRET}
       JWT_EXPIRES_IN:  30d
       VAPID_PUBLIC_KEY:  ${VAPID_PUBLIC_KEY}
