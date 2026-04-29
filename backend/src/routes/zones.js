@@ -1,0 +1,94 @@
+const express = require('express');
+const pool = require('../config/database');
+const { authenticate, requireAdmin } = require('../middleware/auth');
+
+const router = express.Router();
+
+// GET /api/zones
+router.get('/', authenticate, async (req, res) => {
+    const { rows } = await pool.query(
+        `SELECT
+            id, name, radius,
+            ST_Y(center::geometry) AS latitude,
+            ST_X(center::geometry) AS longitude,
+            created_by, notify_members, is_active, created_at
+         FROM zones
+         ORDER BY created_at DESC`
+    );
+    res.json(rows);
+});
+
+// POST /api/zones
+router.post('/', authenticate, async (req, res) => {
+    const { name, latitude, longitude, radius, notify_members } = req.body;
+    if (!name || latitude == null || longitude == null || !radius) {
+        return res.status(400).json({ error: 'name, latitude, longitude and radius are required' });
+    }
+
+    const point = `POINT(${longitude} ${latitude})`;
+    const members = Array.isArray(notify_members) ? notify_members : [];
+
+    const { rows } = await pool.query(
+        `INSERT INTO zones (name, center, radius, created_by, notify_members)
+         VALUES ($1, ST_GeogFromText($2), $3, $4, $5)
+         RETURNING id, name, radius, created_at,
+                   ST_Y(center::geometry) AS latitude,
+                   ST_X(center::geometry) AS longitude`,
+        [name.trim(), point, radius, req.user.id, members]
+    );
+    res.status(201).json(rows[0]);
+});
+
+// PUT /api/zones/:id
+router.put('/:id', authenticate, async (req, res) => {
+    const { name, latitude, longitude, radius, notify_members, is_active } = req.body;
+
+    const { rows: existing } = await pool.query('SELECT * FROM zones WHERE id = $1', [req.params.id]);
+    if (!existing[0]) return res.status(404).json({ error: 'Zone not found' });
+
+    if (existing[0].created_by !== req.user.id && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const zone = existing[0];
+    const newPoint = latitude != null && longitude != null
+        ? `POINT(${longitude} ${latitude})`
+        : null;
+
+    const { rows } = await pool.query(
+        `UPDATE zones SET
+            name           = COALESCE($1, name),
+            center         = COALESCE(ST_GeogFromText($2), center),
+            radius         = COALESCE($3, radius),
+            notify_members = COALESCE($4, notify_members),
+            is_active      = COALESCE($5, is_active)
+         WHERE id = $6
+         RETURNING id, name, radius, is_active, created_at,
+                   ST_Y(center::geometry) AS latitude,
+                   ST_X(center::geometry) AS longitude`,
+        [
+            name ?? null,
+            newPoint,
+            radius ?? null,
+            Array.isArray(notify_members) ? notify_members : null,
+            is_active ?? null,
+            req.params.id,
+        ]
+    );
+    res.json(rows[0]);
+});
+
+// DELETE /api/zones/:id
+router.delete('/:id', authenticate, async (req, res) => {
+    const { rows } = await pool.query('SELECT created_by FROM zones WHERE id = $1', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Zone not found' });
+
+    if (rows[0].created_by !== req.user.id && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    await pool.query('DELETE FROM zones WHERE id = $1', [req.params.id]);
+    res.status(204).end();
+});
+
+module.exports = router;
