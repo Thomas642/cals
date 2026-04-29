@@ -194,6 +194,31 @@
   </div>
 </div>
 
+<!-- Add Place dialog -->
+<div id="placeOverlay" class="panel-overlay hidden">
+  <div class="panel-sheet">
+    <div class="panel-handle"></div>
+    <div class="panel-title">📍 Ajouter un lieu</div>
+    <div class="form-group">
+      <label>Nom du lieu</label>
+      <input type="text" id="placeName" placeholder="ex : Maison, Travail…">
+    </div>
+    <div class="form-group">
+      <label>Type</label>
+      <div class="icon-picker" id="placeIconPicker">
+        <button class="icon-btn active" data-icon="home">🏠 Maison</button>
+        <button class="icon-btn" data-icon="work">💼 Travail</button>
+        <button class="icon-btn" data-icon="school">🏫 École</button>
+        <button class="icon-btn" data-icon="sport">🏋️ Sport</button>
+        <button class="icon-btn" data-icon="shop">🛒 Courses</button>
+        <button class="icon-btn" data-icon="star">⭐ Autre</button>
+      </div>
+    </div>
+    <button class="btn btn-primary btn-full" id="savePlace">Ajouter</button>
+    <button class="btn btn-ghost btn-full mt-1" id="cancelPlace">Annuler</button>
+  </div>
+</div>
+
 <!-- Toast container -->
 <div id="toastContainer"></div>
 

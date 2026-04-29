@@ -2,6 +2,12 @@
 const MapModule = (() => {
   let map, markers = {}, tripLayer = null, zoneCircles = [];
   let pickingZone = false;
+  let placeMarkers = {};
+  let onLongPressCallback = null;
+
+  const PLACE_ICONS = {
+    home: '🏠', work: '💼', school: '🏫', sport: '🏋️', shop: '🛒', star: '⭐',
+  };
 
   function init() {
     map = L.map('map', {
@@ -18,6 +24,26 @@ const MapModule = (() => {
     L.control.zoom({ position: 'topleft' }).addTo(map);
 
     map.on('click', onMapClick);
+
+    // Right-click (desktop) → add place
+    map.on('contextmenu', (e) => {
+      L.DomEvent.preventDefault(e);
+      if (onLongPressCallback) onLongPressCallback(e.latlng.lat, e.latlng.lng);
+    });
+
+    // Long-press (mobile touch)
+    let lpTimer = null;
+    let lpMoved = false;
+    map.on('touchstart', (e) => {
+      lpMoved = false;
+      const latlng = e.latlng;
+      lpTimer = setTimeout(() => {
+        if (!lpMoved && onLongPressCallback) onLongPressCallback(latlng.lat, latlng.lng);
+      }, 700);
+    });
+    map.on('touchmove',  () => { lpMoved = true; clearTimeout(lpTimer); });
+    map.on('touchend',   () => clearTimeout(lpTimer));
+
     return map;
   }
 
@@ -161,7 +187,43 @@ const MapModule = (() => {
 
   function getMap() { return map; }
 
-  return { init, updateMember, removeMember, focusMember, focusAll, showTrip, replayTrip, clearTrip, renderZones, setPickingZone, getMap };
+  // ── Places ──────────────────────────────────────────────────────────────────
+  function setOnLongPress(callback) {
+    onLongPressCallback = callback;
+  }
+
+  function renderPlaces(places) {
+    Object.values(placeMarkers).forEach((m) => map.removeLayer(m));
+    placeMarkers = {};
+    places.forEach(addPlace);
+  }
+
+  function addPlace(place) {
+    const emoji = PLACE_ICONS[place.icon] || '📍';
+    const icon = L.divIcon({
+      html: `<div class="place-marker"><span class="place-emoji">${emoji}</span><div class="place-label">${place.name}</div></div>`,
+      className: '',
+      iconSize: [60, 52],
+      iconAnchor: [30, 42],
+      popupAnchor: [0, -42],
+    });
+    const marker = L.marker([place.latitude, place.longitude], { icon, zIndexOffset: 500 }).addTo(map);
+    marker.bindPopup(
+      `<strong>${emoji} ${place.name}</strong><br>
+      <button class="btn btn-danger btn-sm" style="margin-top:.5rem;width:100%" onclick="window._deletePlaceCallback && window._deletePlaceCallback('${place.id}')">Supprimer</button>`,
+      { maxWidth: 180 }
+    );
+    placeMarkers[place.id] = marker;
+  }
+
+  function removePlace(id) {
+    if (placeMarkers[id]) {
+      map.removeLayer(placeMarkers[id]);
+      delete placeMarkers[id];
+    }
+  }
+
+  return { init, updateMember, removeMember, focusMember, focusAll, showTrip, replayTrip, clearTrip, renderZones, setPickingZone, getMap, setOnLongPress, renderPlaces, addPlace, removePlace };
 })();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

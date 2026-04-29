@@ -21,22 +21,27 @@
     navigator.serviceWorker.register('/sw.js').catch(console.warn);
   }
 
-  // Load initial positions
+  // Load initial data
   await refreshPositions();
   await loadZones();
+  await loadPlaces();
 
   // Poll positions every 10 s (fallback if WS drops)
   setInterval(refreshPositions, 10_000);
 
-  setupSocket();
+  // Setup all UI first — must never be blocked by socket/GPS failures
   setupSOS();
   setupPrivacy();
   setupProfile();
   setupHistory();
   setupZones();
+  setupPlaces();
   setupNavigation();
   setupAdmin();
   setupLocate();
+
+  // Socket last: if io is undefined or connection fails, UI still works
+  try { setupSocket(); } catch (e) { console.warn('[WS] init failed:', e.message); }
 })();
 
 // ── Realtime via WebSocket ────────────────────────────────────────────────────
@@ -183,10 +188,91 @@ function setupLocate() {
     const latlng = GeoModule.getCurrentLatLng();
     if (latlng) {
       MapModule.getMap().setView(latlng, 16, { animate: true });
-    } else {
-      showToast('⚠️ Position non disponible', 'Activez le GPS');
+      return;
+    }
+    if (!navigator.geolocation) {
+      showToast('⚠️ GPS non supporté', 'Votre navigateur ne supporte pas la géolocalisation');
+      return;
+    }
+    showToast('📡 Recherche GPS…', 'Acceptez la permission dans votre navigateur');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        MapModule.getMap().setView([latitude, longitude], 16, { animate: true });
+      },
+      () => showToast('⚠️ GPS indisponible', 'Activez la géolocalisation dans les paramètres du navigateur'),
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+    );
+  });
+}
+
+// ── Places (lieux favoris) ─────────────────────────────────────────────────
+let pendingPlaceLat = null;
+let pendingPlaceLng = null;
+
+async function loadPlaces() {
+  try {
+    const places = await API.get('/api/places');
+    MapModule.renderPlaces(places);
+  } catch (err) {
+    console.warn('[places]', err.message);
+  }
+}
+
+function setupPlaces() {
+  const overlay = document.getElementById('placeOverlay');
+  let selectedIcon = 'home';
+
+  MapModule.setOnLongPress((lat, lng) => {
+    pendingPlaceLat = lat;
+    pendingPlaceLng = lng;
+    document.getElementById('placeName').value = '';
+    selectedIcon = 'home';
+    document.querySelectorAll('.icon-btn').forEach((b) => b.classList.remove('active'));
+    document.querySelector('.icon-btn[data-icon="home"]').classList.add('active');
+    overlay.classList.remove('hidden');
+    setTimeout(() => document.getElementById('placeName').focus(), 150);
+  });
+
+  document.querySelectorAll('.icon-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.icon-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      selectedIcon = btn.dataset.icon;
+    });
+  });
+
+  document.getElementById('savePlace').addEventListener('click', async () => {
+    const name = document.getElementById('placeName').value.trim();
+    if (!name) { showToast('⚠️ Entrez un nom', ''); return; }
+    try {
+      const place = await API.post('/api/places', {
+        name,
+        icon: selectedIcon,
+        latitude: pendingPlaceLat,
+        longitude: pendingPlaceLng,
+      });
+      MapModule.addPlace(place);
+      overlay.classList.add('hidden');
+      showToast(`📍 ${place.name} ajouté`, '');
+    } catch (err) {
+      showToast('Erreur', err.message);
     }
   });
+
+  document.getElementById('cancelPlace').addEventListener('click', () => {
+    overlay.classList.add('hidden');
+  });
+
+  window._deletePlaceCallback = async (id) => {
+    try {
+      await API.delete(`/api/places/${id}`);
+      MapModule.removePlace(id);
+      showToast('Lieu supprimé', '');
+    } catch (err) {
+      showToast('Erreur', err.message);
+    }
+  };
 }
 
 // ── Profile ───────────────────────────────────────────────────────────────────
