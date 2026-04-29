@@ -219,6 +219,17 @@ html, body { height: 100%; font-family: system-ui, -apple-system, sans-serif; ba
 .text-danger { color: var(--danger); }
 .text-success { color: var(--success); }
 
+/* ─── Place markers ──────────────────────────────────────────────────────────── */
+.place-marker { display: flex; flex-direction: column; align-items: center; filter: drop-shadow(0 2px 4px rgba(0,0,0,.45)); }
+.place-emoji { font-size: 1.6rem; line-height: 1; }
+.place-label { font-size: .65rem; font-weight: 600; background: rgba(15,23,42,.85); color: #f1f5f9; padding: 1px 6px; border-radius: 4px; white-space: nowrap; margin-top: 2px; }
+
+/* ─── Icon picker ────────────────────────────────────────────────────────────── */
+.icon-picker { display: flex; flex-wrap: wrap; gap: .5rem; }
+.icon-btn { padding: .4rem .7rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); color: var(--text); font-size: .8rem; cursor: pointer; transition: background .15s, border-color .15s; }
+.icon-btn:hover { background: var(--border); }
+.icon-btn.active { border-color: var(--primary); background: rgba(59,130,246,.18); color: var(--primary); }
+
 /* ─── Leaflet overrides ──────────────────────────────────────────────────────── */
 .leaflet-popup-content-wrapper { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
 .leaflet-popup-tip { background: var(--surface); }

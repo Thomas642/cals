@@ -18,6 +18,7 @@ const zonesRoutes = require('./routes/zones');
 const membersRoutes = require('./routes/members');
 const notifyRoutes = require('./routes/notify');
 const { startWatchdog } = require('./services/watchdog');
+const placesRoutes = require('./routes/places');
 
 // ── Web Push setup ───────────────────────────────────────────────────────────
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
@@ -105,6 +106,7 @@ app.use('/api/history', apiLimiter, historyRoutes);
 app.use('/api/zones', apiLimiter, zonesRoutes);
 app.use('/api/members', apiLimiter, membersRoutes);
 app.use('/api/notify', apiLimiter, notifyRoutes);
+app.use('/api/places', apiLimiter, placesRoutes);
 
 // VAPID public key (needed by the frontend to subscribe to push)
 app.get('/api/push-key', (_, res) => {
@@ -135,11 +137,31 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: 'Internal server error' });
 });
 
+// ── Migrations ───────────────────────────────────────────────────────────────
+async function runMigrations() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS places (
+            id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            name       VARCHAR(100) NOT NULL,
+            icon       VARCHAR(20)  NOT NULL DEFAULT 'home',
+            latitude   DOUBLE PRECISION NOT NULL,
+            longitude  DOUBLE PRECISION NOT NULL,
+            created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    `);
+}
+
 // ── Start ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Family Tracker API running on port ${PORT}`);
-    startWatchdog(io);
-});
+runMigrations()
+    .then(() => server.listen(PORT, () => {
+        console.log(`Family Tracker API running on port ${PORT}`);
+        startWatchdog(io);
+    }))
+    .catch((err) => {
+        console.error('Migration failed:', err);
+        process.exit(1);
+    });
 
 module.exports = app;
