@@ -15,8 +15,9 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- Socket.io -->
+  <!-- Socket.io — fallback no-op si le script ne charge pas -->
   <script src="/socket.io/socket.io.js"></script>
+  <script>window.io = window.io || function() { return { on: function(){}, emit: function(){}, disconnect: function(){} }; };</script>
 
   <link rel="stylesheet" href="/css/app.css">
 </head>
