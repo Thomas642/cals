@@ -29,19 +29,21 @@
   // Poll positions every 10 s (fallback if WS drops)
   setInterval(refreshPositions, 10_000);
 
-  // Setup all UI first — must never be blocked by socket/GPS failures
-  setupSOS();
-  setupPrivacy();
-  setupProfile();
-  setupHistory();
-  setupZones();
-  setupPlaces();
-  setupNavigation();
-  setupAdmin();
-  setupLocate();
-
-  // Socket last: if io is undefined or connection fails, UI still works
-  try { setupSocket(); } catch (e) { console.warn('[WS] init failed:', e.message); }
+  // Each setup is isolated — one failure must never block the others
+  for (const [name, fn] of [
+    ['SOS',        setupSOS],
+    ['Privacy',    setupPrivacy],
+    ['Profile',    setupProfile],
+    ['History',    setupHistory],
+    ['Zones',      setupZones],
+    ['Places',     setupPlaces],
+    ['Navigation', setupNavigation],
+    ['Admin',      setupAdmin],
+    ['Locate',     setupLocate],
+    ['Socket',     setupSocket],
+  ]) {
+    try { fn(); } catch (e) { console.warn(`[setup${name}] failed:`, e.message); }
+  }
 })();
 
 // ── Realtime via WebSocket ────────────────────────────────────────────────────
