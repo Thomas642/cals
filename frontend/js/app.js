@@ -31,22 +31,39 @@
 
   // Setup UI — runs unconditionally even if init above partially failed
   for (const [name, fn] of [
-    ['SOS',        setupSOS],
-    ['Privacy',    setupPrivacy],
-    ['Profile',    setupProfile],
-    ['History',    setupHistory],
-    ['Zones',      setupZones],
-    ['Places',     typeof setupPlaces === 'function' ? setupPlaces : null],
-    ['Navigation', setupNavigation],
-    ['Admin',      setupAdmin],
-    ['Locate',     setupLocate],
-    ['Socket',     setupSocket],
+    ['SOS',           setupSOS],
+    ['OkButton',      setupOkButton],
+    ['QuickMessages', setupQuickMessages],
+    ['Privacy',       setupPrivacy],
+    ['Profile',       setupProfile],
+    ['History',       setupHistory],
+    ['Zones',         setupZones],
+    ['Places',        typeof setupPlaces === 'function' ? setupPlaces : null],
+    ['Navigation',    setupNavigation],
+    ['Admin',         setupAdmin],
+    ['Locate',        setupLocate],
+    ['Socket',        setupSocket],
   ]) {
     if (!fn) continue;
     try { fn(); } catch (e) { console.warn(`[setup${name}]`, e.message); }
   }
   }
 })();
+
+// ── Notification badge state ──────────────────────────────────────────────────
+const unread = { members: 0, zones: 0, admin: 0 };
+
+function incBadge(key) {
+  unread[key] = (unread[key] || 0) + 1;
+  const el = document.getElementById(`badge${key.charAt(0).toUpperCase() + key.slice(1)}`);
+  if (el) { el.textContent = unread[key] > 9 ? '9+' : unread[key]; el.classList.remove('hidden'); }
+}
+
+function clearBadge(key) {
+  unread[key] = 0;
+  const el = document.getElementById(`badge${key.charAt(0).toUpperCase() + key.slice(1)}`);
+  if (el) el.classList.add('hidden');
+}
 
 // ── Realtime via WebSocket ────────────────────────────────────────────────────
 let socket;
@@ -60,21 +77,41 @@ function setupSocket() {
   });
 
   socket.on('sos', (data) => {
-    showToast(`🆘 SOS — ${data.member.name}`, `Position partagée`, 'sos');
-    if (data.latitude) MapModule.getMap().setView([data.latitude, data.longitude], 16);
-    showSosAlert(data);
+    if (data.member?.id !== currentUser?.id) {
+      showToast(`🆘 SOS — ${data.member.name}`, `Signal de détresse !`, 'sos');
+      if (data.latitude) MapModule.getMap().setView([data.latitude, data.longitude], 16);
+      showSosAlert(data);
+      incBadge('admin');
+    }
+  });
+
+  socket.on('ok_signal', (data) => {
+    if (data.member?.id !== currentUser?.id) {
+      showToast(`✅ ${data.member.name} est OK`, 'Signal de sécurité reçu', 'ok');
+      incBadge('members');
+    }
+  });
+
+  socket.on('quick_message', (data) => {
+    if (data.member?.id !== currentUser?.id) {
+      showToast(`💬 ${data.member.name}`, data.text, 'message');
+      incBadge('members');
+    }
   });
 
   socket.on('geofence_enter', (data) => {
     showToast(`📍 ${data.member.name} est arrivé(e)`, `Zone : ${data.zone.name}`);
+    incBadge('zones');
   });
 
   socket.on('geofence_exit', (data) => {
     showToast(`📍 ${data.member.name} a quitté`, `Zone : ${data.zone.name}`);
+    incBadge('zones');
   });
 
   socket.on('battery', (data) => {
-    showToast(`🔋 Batterie faible`, `${data.member.name} a une batterie critique`);
+    showToast(`🔋 Batterie faible`, `${data.member.name} — batterie critique`, 'warning');
+    incBadge('members');
   });
 
   socket.on('disconnect', (data) => {
@@ -196,6 +233,74 @@ function showSosAlert(data) {
   document.getElementById('sosAlertClose').onclick = () => {
     overlay.classList.add('hidden');
   };
+}
+
+// ── Je suis OK button ─────────────────────────────────────────────────────────
+function setupOkButton() {
+  const btn = document.getElementById('okBtn');
+  let cooldown = false;
+
+  btn.addEventListener('click', async () => {
+    if (cooldown) { showToast('⏳ Patientez', 'Signal déjà envoyé récemment'); return; }
+    try {
+      await API.post('/api/notify/ok', {});
+      showToast('✅ Signal envoyé', 'La famille a été notifiée', 'ok');
+      btn.classList.add('sent');
+      cooldown = true;
+      setTimeout(() => { cooldown = false; btn.classList.remove('sent'); }, 30_000);
+    } catch (err) {
+      showToast('Erreur', err.message);
+    }
+  });
+}
+
+// ── Messages rapides ───────────────────────────────────────────────────────────
+function setupQuickMessages() {
+  const overlay = document.getElementById('msgOverlay');
+  const input   = document.getElementById('customMsgInput');
+
+  document.getElementById('msgBtn').addEventListener('click', () => {
+    overlay.classList.remove('hidden');
+    setTimeout(() => input.focus(), 150);
+  });
+
+  document.getElementById('closeMsg').addEventListener('click', () => {
+    overlay.classList.add('hidden');
+  });
+
+  document.querySelectorAll('.quick-msg-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await sendQuickMessage(btn.dataset.msg);
+      overlay.classList.add('hidden');
+    });
+  });
+
+  document.getElementById('sendCustomMsg').addEventListener('click', async () => {
+    const text = input.value.trim();
+    if (!text) return;
+    await sendQuickMessage(text);
+    input.value = '';
+    overlay.classList.add('hidden');
+  });
+
+  input.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      const text = input.value.trim();
+      if (!text) return;
+      await sendQuickMessage(text);
+      input.value = '';
+      overlay.classList.add('hidden');
+    }
+  });
+}
+
+async function sendQuickMessage(text) {
+  try {
+    await API.post('/api/notify/message', { text });
+    showToast(`💬 Message envoyé`, text, 'message');
+  } catch (err) {
+    showToast('Erreur', err.message);
+  }
 }
 
 // ── Privacy toggle ─────────────────────────────────────────────────────────────
@@ -559,6 +664,7 @@ function setupAdmin() {
     await renderAdminPanel();
     overlay.classList.remove('hidden');
     setActiveNav('navAdmin');
+    clearBadge('admin');
   });
 
   document.getElementById('closeAdmin').addEventListener('click', () => {
@@ -572,10 +678,11 @@ async function renderAdminPanel() {
   container.innerHTML = '<p class="text-muted">Chargement…</p>';
 
   try {
-    const [stats, members, invitations] = await Promise.all([
+    const [stats, members, invitations, sosHistory] = await Promise.all([
       API.get('/api/members/stats/global'),
       API.get('/api/members'),
       API.get('/api/auth/invitations'),
+      API.get('/api/notify/history?type=sos&limit=10').catch(() => []),
     ]);
 
     container.innerHTML = `
@@ -611,6 +718,24 @@ async function renderAdminPanel() {
                 </button>` : ''}
             </div>
           </div>`).join('')}
+      </div>
+
+      <div class="admin-section">
+        <h4>Historique SOS</h4>
+        ${sosHistory.length === 0
+          ? '<p class="text-muted">Aucun SOS enregistré.</p>'
+          : sosHistory.map((e) => {
+              const p = e.payload || {};
+              const when = new Date(e.sent_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+              return `<div style="display:flex;align-items:center;gap:.75rem;padding:.5rem 0;border-bottom:1px solid var(--border)">
+                <span style="font-size:1.4rem">🆘</span>
+                <div style="flex:1">
+                  <div style="font-weight:600;font-size:.875rem">${e.sender_name || 'Inconnu'}</div>
+                  <div class="text-muted">${when}${p.latitude ? ` · ${p.latitude.toFixed(4)}, ${p.longitude.toFixed(4)}` : ''}</div>
+                </div>
+              </div>`;
+            }).join('')
+        }
       </div>
 
       <div class="admin-section">
@@ -671,10 +796,13 @@ function setupNavigation() {
     document.getElementById('sidebar').classList.toggle('open');
     setActiveNav('navMembers');
     MapModule.focusAll();
+    clearBadge('members');
   });
 
   document.getElementById('closeSidebar').addEventListener('click', () => {
     document.getElementById('sidebar').classList.remove('open');
     setActiveNav('navMap');
   });
+
+  document.getElementById('navZones').addEventListener('click', () => clearBadge('zones'), true);
 }
