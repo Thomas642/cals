@@ -22,7 +22,7 @@ async function runWatchdog(io) {
             const ageMin = (now - new Date(row.recorded_at).getTime()) / 60_000;
 
             if (ageMin > DISCONNECT_THRESHOLD_MIN) {
-                await notify(io, row, 'disconnect', {
+                await notify(io, row, 'member_offline', {
                     title: `⚠️ ${row.name} est déconnecté(e)`,
                     body: `Aucune position depuis ${Math.floor(ageMin)} min`,
                 });

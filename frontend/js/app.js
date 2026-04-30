@@ -114,7 +114,7 @@ function setupSocket() {
     incBadge('members');
   });
 
-  socket.on('disconnect', (data) => {
+  socket.on('member_offline', (data) => {
     if (data?.member) showToast(`⚠️ ${data.member.name} est déconnecté(e)`, '');
   });
 
