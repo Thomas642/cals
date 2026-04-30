@@ -142,30 +142,38 @@ router.delete('/:id', authenticate, requireAdmin, async (req, res) => {
 
 // GET /api/members/stats/global  — admin dashboard stats
 router.get('/stats/global', authenticate, requireAdmin, async (req, res) => {
-    const [memberCount, posCount, distRow] = await Promise.all([
-        pool.query('SELECT COUNT(*) FROM users WHERE is_active = TRUE'),
-        pool.query('SELECT COUNT(*) FROM positions'),
-        pool.query(`
-            SELECT
-                user_id,
-                u.name,
-                SUM(ST_Distance(
-                    location::geometry,
-                    LAG(location::geometry) OVER (PARTITION BY p.user_id ORDER BY recorded_at)
-                ) / 1000) AS distance_km
-            FROM positions p
-            JOIN users u ON u.id = p.user_id
-            GROUP BY p.user_id, u.name
-            ORDER BY distance_km DESC NULLS LAST
-            LIMIT 5
-        `),
-    ]);
+    try {
+        const [memberCount, posCount, distRow] = await Promise.all([
+            pool.query('SELECT COUNT(*) FROM users WHERE is_active = TRUE'),
+            pool.query('SELECT COUNT(*) FROM positions'),
+            // Subquery required: window function (LAG) can't be nested inside aggregate (SUM)
+            pool.query(`
+                SELECT user_id, name,
+                    COALESCE(SUM(step_dist) / 1000, 0) AS distance_km
+                FROM (
+                    SELECT p.user_id, u.name,
+                        ST_Distance(
+                            location::geometry,
+                            LAG(location::geometry) OVER (PARTITION BY p.user_id ORDER BY recorded_at)
+                        ) AS step_dist
+                    FROM positions p
+                    JOIN users u ON u.id = p.user_id
+                ) sub
+                GROUP BY user_id, name
+                ORDER BY distance_km DESC NULLS LAST
+                LIMIT 5
+            `),
+        ]);
 
-    res.json({
-        active_members: parseInt(memberCount.rows[0].count),
-        total_positions: parseInt(posCount.rows[0].count),
-        top_members: distRow.rows,
-    });
+        res.json({
+            active_members: parseInt(memberCount.rows[0].count),
+            total_positions: parseInt(posCount.rows[0].count),
+            top_members: distRow.rows,
+        });
+    } catch (err) {
+        console.error('[stats/global]', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 module.exports = router;
