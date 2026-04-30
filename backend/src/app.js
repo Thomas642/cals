@@ -69,6 +69,9 @@ io.on('connection', (socket) => {
 
 app.set('io', io);
 
+// Trust the first proxy (nginx) so rate-limiter reads the real client IP
+app.set('trust proxy', 1);
+
 // ── Middleware ───────────────────────────────────────────────────────────────
 app.use(helmet({
     contentSecurityPolicy: false, // handled by Nginx
