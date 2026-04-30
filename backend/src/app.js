@@ -83,9 +83,10 @@ app.use(express.json({ limit: '1mb' }));
 
 const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 300,
+    max: 500,
     standardHeaders: true,
     legacyHeaders: false,
+    message: { error: 'Trop de requêtes, réessayez dans quelques minutes.' },
 });
 
 const authLimiter = rateLimit({
@@ -93,6 +94,7 @@ const authLimiter = rateLimit({
     max: 20,
     standardHeaders: true,
     legacyHeaders: false,
+    message: { error: 'Trop de tentatives, réessayez dans quelques minutes.' },
 });
 
 // ── Static uploads ───────────────────────────────────────────────────────────
