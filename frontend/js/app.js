@@ -47,7 +47,6 @@
     if (!fn) continue;
     try { fn(); } catch (e) { console.warn(`[setup${name}]`, e.message); }
   }
-  }
 })();
 
 // ── Notification badge state ──────────────────────────────────────────────────
