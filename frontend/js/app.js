@@ -62,6 +62,7 @@ function setupSocket() {
   socket.on('sos', (data) => {
     showToast(`🆘 SOS — ${data.member.name}`, `Position partagée`, 'sos');
     if (data.latitude) MapModule.getMap().setView([data.latitude, data.longitude], 16);
+    showSosAlert(data);
   });
 
   socket.on('geofence_enter', (data) => {
@@ -115,19 +116,29 @@ function renderMemberList() {
       ? `<img src="${m.avatar_url}" alt="${m.name}">`
       : initials;
 
-    const batClass = m.battery != null && m.battery < 20 ? 'battery-icon low' : 'battery-icon';
+    const ageSec = m.recorded_at ? (Date.now() - new Date(m.recorded_at)) / 1000 : Infinity;
+    const dotClass = ageSec < 120 ? 'member-online-dot' : ageSec < 600 ? 'member-online-dot away' : 'member-online-dot offline';
+
+    const bat = m.battery != null ? m.battery : null;
+    const batBarClass = bat != null && bat < 20 ? 'battery-bar-inner low' : bat != null && bat < 40 ? 'battery-bar-inner med' : 'battery-bar-inner';
+    const batteryHtml = bat != null ? `
+      <span class="battery-wrap">
+        <span class="battery-bar-outer"><span class="${batBarClass}" style="width:${bat}%"></span></span>
+        <span class="battery-pct">${bat}%</span>
+      </span>` : '';
 
     card.innerHTML = `
-      <div class="member-avatar" style="background:${m.color}">
-        ${avatarContent}
+      <div class="member-avatar-wrap">
+        <div class="member-avatar" style="background:${m.color}">${avatarContent}</div>
+        <span class="${dotClass}"></span>
       </div>
       <div class="member-info">
         <div class="member-name">${m.name}</div>
         <div class="member-meta">
-          ${m.battery != null ? `<span class="${batClass}">🔋 ${m.battery}%</span>` : ''}
+          ${batteryHtml}
           ${m.recorded_at ? `<span>${timeAgo(new Date(m.recorded_at))}</span>` : ''}
         </div>
-        ${m.status ? `<div style="font-size:.75rem;color:var(--text-muted)">${m.status}</div>` : ''}
+        ${m.status ? `<div style="font-size:.75rem;color:var(--text-muted);margin-top:.15rem">${m.status}</div>` : ''}
       </div>`;
 
     card.addEventListener('click', () => MapModule.focusMember(m.id));
@@ -148,10 +159,11 @@ function setupSOS() {
   const startHold = () => {
     btn.classList.add('holding');
     holdTimer = setTimeout(async () => {
+      btn.classList.remove('holding');
       const latlng = GeoModule.getCurrentLatLng();
-      if (!latlng) { showToast('⚠️ Position non disponible', 'Activez le GPS'); return; }
       try {
-        await API.post('/api/notify/sos', { latitude: latlng[0], longitude: latlng[1] });
+        const body = latlng ? { latitude: latlng[0], longitude: latlng[1] } : {};
+        await API.post('/api/notify/sos', body);
         showToast('🆘 SOS envoyé', 'Tous les membres ont été alertés', 'sos');
       } catch (err) {
         showToast('Erreur SOS', err.message);
@@ -169,6 +181,21 @@ function setupSOS() {
   btn.addEventListener('mouseup',    stopHold);
   btn.addEventListener('touchend',   stopHold);
   btn.addEventListener('mouseleave', stopHold);
+}
+
+function showSosAlert(data) {
+  const overlay = document.getElementById('sosAlertOverlay');
+  if (!overlay) return;
+  document.getElementById('sosAlertName').textContent = data.member?.name || 'Un membre';
+  overlay.classList.remove('hidden');
+
+  document.getElementById('sosAlertLocate').onclick = () => {
+    overlay.classList.add('hidden');
+    if (data.latitude) MapModule.getMap().setView([data.latitude, data.longitude], 16);
+  };
+  document.getElementById('sosAlertClose').onclick = () => {
+    overlay.classList.add('hidden');
+  };
 }
 
 // ── Privacy toggle ─────────────────────────────────────────────────────────────
@@ -346,6 +373,12 @@ function setupProfile() {
     } catch (err) {
       showToast('Erreur', err.message);
     }
+  });
+
+  document.querySelectorAll('.quick-status-btn').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      document.getElementById('profileStatus').value = chip.dataset.status;
+    });
   });
 
   document.getElementById('testPush').addEventListener('click', async () => {

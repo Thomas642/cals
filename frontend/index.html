@@ -52,8 +52,14 @@
       </svg>
     </button>
 
-    <!-- SOS button -->
-    <button id="sosBtn" title="Maintenir 3s pour envoyer SOS">SOS</button>
+    <!-- SOS button with SVG progress ring -->
+    <button id="sosBtn" title="Maintenir 3s pour envoyer SOS">
+      <svg class="sos-ring" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg">
+        <circle class="sos-ring-bg"       cx="36" cy="36" r="32"/>
+        <circle class="sos-ring-progress" cx="36" cy="36" r="32"/>
+      </svg>
+      SOS
+    </button>
 
     <!-- Members sidebar -->
     <div id="sidebar">
@@ -172,6 +178,14 @@
     <div class="form-group">
       <label>Statut</label>
       <input type="text" id="profileStatus" placeholder="ex : Au travail">
+      <div class="quick-status-grid" style="margin-top:.5rem">
+        <button class="quick-status-btn" data-status="🏠 À la maison">🏠 Maison</button>
+        <button class="quick-status-btn" data-status="💼 Au travail">💼 Travail</button>
+        <button class="quick-status-btn" data-status="🚗 En route">🚗 En route</button>
+        <button class="quick-status-btn" data-status="✅ Je suis OK">✅ Je suis OK</button>
+        <button class="quick-status-btn" data-status="🏫 À l'école">🏫 École</button>
+        <button class="quick-status-btn clear" data-status="">⊘ Effacer</button>
+      </div>
     </div>
     <div class="form-group">
       <label>Intervalle GPS (secondes)</label>
@@ -217,6 +231,23 @@
     </div>
     <button class="btn btn-primary btn-full" id="savePlace">Ajouter</button>
     <button class="btn btn-ghost btn-full mt-1" id="cancelPlace">Annuler</button>
+  </div>
+</div>
+
+<!-- SOS full-screen alert (shown to family members when someone triggers SOS) -->
+<div id="sosAlertOverlay" class="sos-alert-overlay hidden">
+  <div class="sos-alert-card">
+    <div class="sos-alert-icon">🆘</div>
+    <h2 class="sos-alert-title">ALERTE SOS</h2>
+    <p class="sos-alert-name" id="sosAlertName"></p>
+    <p class="sos-alert-msg">a envoyé un signal de détresse !</p>
+    <div class="sos-alert-actions">
+      <button class="btn btn-danger" id="sosAlertLocate">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+        Voir sur la carte
+      </button>
+      <button class="btn btn-ghost" id="sosAlertClose">Fermer</button>
+    </div>
   </div>
 </div>
 
