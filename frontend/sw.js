@@ -1,5 +1,5 @@
 // ── Service Worker — Family Tracker ─────────────────────────────────────────
-const CACHE_NAME = 'family-tracker-v3';
+const CACHE_NAME = 'family-tracker-v4';
 
 const STATIC_ASSETS = [
   '/',
