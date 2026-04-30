@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # Family Tracker — Initial server setup script
 # Run once on a fresh Ubuntu 22.04 VPS as root or sudo
+# Usage: DOMAIN=famille.gameone-val.com EMAIL=admin@example.com bash setup.sh
 
 set -euo pipefail
 
+DOMAIN="${DOMAIN:-famille.gameone-val.com}"
+CERTBOT_EMAIL="${EMAIL:-}"
+
 echo "=== Family Tracker Setup ==="
+echo "Domain: $DOMAIN"
 
 # ── 1. Dependencies ──────────────────────────────────────────────────────────
 apt-get update && apt-get install -y \
@@ -64,8 +69,8 @@ JWT_SECRET=$JWT_SECRET
 JWT_EXPIRES_IN=30d
 VAPID_PUBLIC_KEY=$VAPID_PUBLIC
 VAPID_PRIVATE_KEY=$VAPID_PRIVATE
-VAPID_EMAIL=mailto:admin@tracker.example.com
-FRONTEND_URL=https://tracker.example.com
+VAPID_EMAIL=mailto:${CERTBOT_EMAIL:-admin@example.com}
+FRONTEND_URL=https://$DOMAIN
 UPLOAD_DIR=$APP_DIR/uploads
 EOF
 
@@ -98,15 +103,25 @@ systemctl enable familytracker
 systemctl start familytracker
 
 # ── 6. Nginx ─────────────────────────────────────────────────────────────────
-cp ./nginx/familytracker.conf /etc/nginx/sites-available/familytracker
+# Replace placeholder domain in nginx config if needed
+sed "s/famille\.gameone-val\.com/$DOMAIN/g" ./nginx/familytracker.conf \
+  > /etc/nginx/sites-available/familytracker
 ln -sf /etc/nginx/sites-available/familytracker /etc/nginx/sites-enabled/
 nginx -t && systemctl reload nginx
 
-# ── 7. SSL ───────────────────────────────────────────────────────────────────
-echo ""
-echo "=== Run the following to set up SSL ==="
-echo "certbot --nginx -d tracker.example.com"
-echo ""
+# ── 7. SSL (Let's Encrypt via Certbot) ───────────────────────────────────────
+if [[ -n "$CERTBOT_EMAIL" ]]; then
+  echo "=== Installing SSL certificate via Certbot ==="
+  certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$CERTBOT_EMAIL"
+  echo "=== SSL installed! Auto-renewal is active via certbot systemd timer ==="
+else
+  echo ""
+  echo "=== IMPORTANT: SSL not configured (no EMAIL provided) ==="
+  echo "Run this command manually on the server to enable HTTPS:"
+  echo "  certbot --nginx -d $DOMAIN --non-interactive --agree-tos -m you@example.com"
+  echo ""
+fi
+
 echo "=== Setup complete! ==="
 echo "Secrets saved to /root/.ft_secrets"
 echo "Next: create the first admin account manually:"
