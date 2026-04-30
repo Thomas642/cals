@@ -345,6 +345,71 @@ html, body {
   box-shadow: 0 0 14px var(--primary-glow);
 }
 
+/* ─── Messages rapides button ───────────────────────────────────────────────── */
+#msgBtn {
+  position: absolute; bottom: 152px; left: 16px; z-index: 800;
+  width: 46px; height: 46px; border-radius: 50%;
+  background: var(--glass); backdrop-filter: blur(12px);
+  color: var(--primary-l); border: 1.5px solid var(--glass-border);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  box-shadow: var(--shadow-sm); transition: all .2s;
+}
+#msgBtn:hover {
+  background: rgba(99,102,241,.18); border-color: var(--primary);
+  box-shadow: 0 0 14px var(--primary-glow);
+}
+
+/* ─── Je suis OK button ─────────────────────────────────────────────────────── */
+#okBtn {
+  position: absolute; bottom: 152px; right: 16px; z-index: 800;
+  width: 58px; height: 40px; border-radius: 20px;
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff; border: none; font-weight: 700; font-size: .72rem;
+  cursor: pointer; user-select: none; letter-spacing: .05em;
+  display: flex; align-items: center; justify-content: center; gap: .3rem;
+  box-shadow: 0 4px 16px rgba(16,185,129,.35);
+  transition: all .2s;
+}
+#okBtn:hover  { box-shadow: 0 4px 22px rgba(16,185,129,.6); transform: translateY(-1px); }
+#okBtn:active { transform: scale(.94); }
+#okBtn.sent   { background: linear-gradient(135deg, #6366f1, #8b5cf6); }
+
+/* ─── Notification badges ───────────────────────────────────────────────────── */
+.nav-badge {
+  position: absolute; top: 3px; right: calc(50% - 18px);
+  min-width: 16px; height: 16px; padding: 0 4px;
+  background: var(--danger); color: #fff;
+  font-size: .6rem; font-weight: 800; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid var(--bg);
+  animation: badgePop .25s cubic-bezier(.34,1.56,.64,1);
+}
+@keyframes badgePop {
+  from { transform: scale(0); }
+  to   { transform: scale(1); }
+}
+
+/* ─── Quick messages panel ──────────────────────────────────────────────────── */
+.quick-msg-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: .5rem;
+  margin-bottom: .25rem;
+}
+.quick-msg-btn {
+  padding: .6rem .75rem; border-radius: var(--radius);
+  background: var(--surface2); border: 1.5px solid var(--border);
+  color: var(--text); font-size: .82rem; font-weight: 500;
+  cursor: pointer; transition: all .18s; text-align: left;
+  line-height: 1.3;
+}
+.quick-msg-btn:hover {
+  background: var(--surface3); border-color: var(--primary);
+  color: var(--primary-l);
+}
+
+/* ─── Incoming message notification card ───────────────────────────────────── */
+.toast.message { border-left-color: var(--primary-l); }
+.toast.ok      { border-left-color: var(--success); }
+
 /* ─── Panel overlays ────────────────────────────────────────────────────────── */
 .panel-overlay {
   position: fixed; inset: 0;
