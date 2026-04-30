@@ -594,7 +594,7 @@ function setupZones() {
   document.getElementById('navZones').addEventListener('click', () => {
     renderZoneList();
     overlay.classList.remove('hidden');
-    MapModule.setPickingZone(true);
+    try { MapModule.setPickingZone(true); } catch {}
     setActiveNav('navZones');
   });
 
@@ -787,14 +787,14 @@ function setActiveNav(id) {
 function setupNavigation() {
   document.getElementById('navMap').addEventListener('click', () => {
     document.getElementById('sidebar').classList.remove('open');
-    MapModule.clearTrip();
+    try { MapModule.clearTrip(); } catch {}
     setActiveNav('navMap');
   });
 
   document.getElementById('navMembers').addEventListener('click', () => {
     document.getElementById('sidebar').classList.toggle('open');
     setActiveNav('navMembers');
-    MapModule.focusAll();
+    try { MapModule.focusAll(); } catch {}
     clearBadge('members');
   });
 

@@ -1,5 +1,5 @@
 // ── Service Worker — Family Tracker ─────────────────────────────────────────
-const CACHE_NAME = 'family-tracker-v4';
+const CACHE_NAME = 'family-tracker-v5';
 
 const STATIC_ASSETS = [
   '/',
@@ -12,18 +12,16 @@ const STATIC_ASSETS = [
   '/js/geolocation.js',
   '/js/notifications.js',
   '/js/app.js',
+  '/vendor/leaflet.css',
+  '/vendor/leaflet.js',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
 ];
 
 // ── Install: cache static assets ─────────────────────────────────────────────
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) =>
-      cache.addAll(STATIC_ASSETS.filter((u) => !u.startsWith('http')))
-    )
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
   );
   self.skipWaiting();
 });
