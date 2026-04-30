@@ -1,5 +1,5 @@
 // ── Service Worker — Family Tracker ─────────────────────────────────────────
-const CACHE_NAME = 'family-tracker-v2';
+const CACHE_NAME = 'family-tracker-v3';
 
 const STATIC_ASSETS = [
   '/',
@@ -42,9 +42,13 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Never cache API calls or socket.io
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/socket.io/')) {
-    return event.respondWith(fetch(event.request));
+  // Never cache API, socket.io, or JS files (always fetch fresh)
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/socket.io/') ||
+    url.pathname.startsWith('/js/')
+  ) {
+    return event.respondWith(fetch(event.request).catch(() => new Response('', { status: 503 })));
   }
 
   // Cache-first for static
