@@ -17,15 +17,15 @@ echo "=== SSL Setup for $DOMAIN ==="
 
 # Install certbot if missing
 if ! command -v certbot &>/dev/null; then
-  apt-get update && apt-get install -y certbot python3-certbot-nginx
+  sudo apt-get update && sudo apt-get install -y certbot python3-certbot-nginx
 fi
 
-# Ensure nginx is serving HTTP on port 80 first (Cloudflare must be in Flexible or DNS-only)
+# Test nginx config (requires root to read /etc/letsencrypt)
 echo "Testing nginx config..."
-nginx -t
+sudo nginx -t
 
 # Obtain/renew certificate
-certbot --nginx \
+sudo certbot --nginx \
   -d "$DOMAIN" \
   --non-interactive \
   --agree-tos \
@@ -39,5 +39,5 @@ echo "Certificate auto-renewal is handled by: systemctl status certbot.timer"
 echo ""
 
 # Verify renewal timer
-systemctl is-active certbot.timer && echo "Auto-renewal timer: ACTIVE" || \
-  echo "WARNING: certbot.timer not active — run: systemctl enable --now certbot.timer"
+sudo systemctl is-active certbot.timer && echo "Auto-renewal timer: ACTIVE" || \
+  echo "WARNING: certbot.timer not active — run: sudo systemctl enable --now certbot.timer"
