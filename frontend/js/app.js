@@ -43,6 +43,7 @@
     ['Admin',         setupAdmin],
     ['Locate',        setupLocate],
     ['Socket',        setupSocket],
+    ['Install',       setupInstall],
   ]) {
     if (!fn) continue;
     try { fn(); } catch (e) { console.warn(`[setup${name}]`, e.message); }
@@ -501,7 +502,6 @@ function setupHistory() {
   const overlay = document.getElementById('historyOverlay');
 
   document.getElementById('navHistory').addEventListener('click', async () => {
-    // Populate member select
     const sel = document.getElementById('historyMember');
     sel.innerHTML = Object.values(memberData).map((m) =>
       `<option value="${m.id}">${m.name}</option>`
@@ -513,62 +513,163 @@ function setupHistory() {
 
     overlay.classList.remove('hidden');
     setActiveNav('navHistory');
+    await doLoadHistory();
   });
+
+  document.querySelectorAll('.shortcut-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      document.querySelectorAll('.shortcut-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      const today = new Date();
+      const fmt   = (d) => d.toISOString().slice(0, 10);
+
+      if (btn.dataset.shortcut === 'today') {
+        document.getElementById('historyFrom').value = fmt(today);
+        document.getElementById('historyTo').value   = fmt(today);
+      } else if (btn.dataset.shortcut === 'yesterday') {
+        const y = new Date(today); y.setDate(y.getDate() - 1);
+        document.getElementById('historyFrom').value = fmt(y);
+        document.getElementById('historyTo').value   = fmt(y);
+      } else if (btn.dataset.shortcut === 'week') {
+        const w = new Date(today); w.setDate(w.getDate() - 6);
+        document.getElementById('historyFrom').value = fmt(w);
+        document.getElementById('historyTo').value   = fmt(today);
+      }
+      await doLoadHistory();
+    });
+  });
+
+  document.getElementById('loadHistory').addEventListener('click', doLoadHistory);
 
   document.getElementById('closeHistory').addEventListener('click', () => {
     overlay.classList.add('hidden');
-    MapModule.clearTrip();
+    try { MapModule.clearTrip(); } catch {}
     setActiveNav('navMap');
   });
+}
 
-  document.getElementById('loadHistory').addEventListener('click', async () => {
-    const userId = document.getElementById('historyMember').value;
-    const from   = document.getElementById('historyFrom').value;
-    const to     = document.getElementById('historyTo').value;
+async function doLoadHistory() {
+  const userId = document.getElementById('historyMember').value;
+  const from   = document.getElementById('historyFrom').value;
+  const to     = document.getElementById('historyTo').value;
+  if (!userId) return;
 
-    try {
-      const trips = await API.get(`/api/history?userId=${userId}&from=${from}&to=${to}`);
-      renderTripList(trips, userId);
-    } catch (err) {
-      showToast('Erreur', err.message);
-    }
-  });
+  const container = document.getElementById('tripList');
+  container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Chargement…</p>';
+
+  try {
+    const trips = await API.get(`/api/history?userId=${userId}&from=${from}&to=${to}`);
+    renderTripList(trips, userId);
+  } catch (err) {
+    showToast('Erreur', err.message);
+    container.innerHTML = '';
+  }
 }
 
 function renderTripList(trips, userId) {
   const container = document.getElementById('tripList');
+
   if (!trips.length) {
-    container.innerHTML = '<p class="text-muted">Aucun trajet trouvé.</p>';
+    container.innerHTML = `
+      <div class="trip-empty">
+        <div style="font-size:2rem">🗺️</div>
+        <p>Aucun trajet ce jour</p>
+        <small>Les trajets apparaissent après 2 points GPS enregistrés</small>
+      </div>`;
     return;
   }
 
-  container.innerHTML = trips.map((t, i) => `
-    <div class="trip-card" data-index="${i}">
-      <div class="trip-header">
-        <span>${new Date(t.started_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
-        <span>${t.distance_km} km</span>
+  const totalDist = trips.reduce((s, t) => s + parseFloat(t.distance_km || 0), 0);
+
+  container.innerHTML = `
+    <div class="trip-summary">
+      <div class="trip-summary-item">
+        <span class="trip-summary-val">${trips.length}</span>
+        <span class="trip-summary-label">trajet${trips.length > 1 ? 's' : ''}</span>
       </div>
-      <div class="trip-meta">
-        <span>⏱ ${formatDuration(t.started_at, t.ended_at)}</span>
-        <span>⚡ ${t.avg_speed_kmh} km/h moy.</span>
-        <span>${t.point_count} pts</span>
+      <div class="trip-summary-item">
+        <span class="trip-summary-val">${totalDist.toFixed(1)}</span>
+        <span class="trip-summary-label">km au total</span>
       </div>
-    </div>`).join('');
+    </div>
+    <p class="trip-hint-global">Toucher pour voir · Appui long pour rejouer</p>
+    ${trips.map((t, i) => {
+      const s = new Date(t.started_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      const e = new Date(t.ended_at).toLocaleTimeString('fr-FR',   { hour: '2-digit', minute: '2-digit' });
+      return `
+        <div class="trip-card" data-index="${i}">
+          <div class="trip-header">
+            <span class="trip-time">${s} → ${e}</span>
+            <span class="trip-distance">${t.distance_km} km</span>
+          </div>
+          <div class="trip-meta">
+            <span>⏱ ${formatDuration(t.started_at, t.ended_at)}</span>
+            <span>⚡ ${t.avg_speed_kmh} km/h moy.</span>
+            <span>📍 ${t.point_count} pts</span>
+          </div>
+        </div>`;
+    }).join('')}`;
 
   container.querySelectorAll('.trip-card').forEach((card) => {
+    let holdTimer = null;
+    const trip  = trips[parseInt(card.dataset.index)];
+    const color = memberData[userId]?.color || '#3b82f6';
+
     card.addEventListener('click', () => {
-      const trip = trips[parseInt(card.dataset.index)];
-      const color = memberData[userId]?.color || '#3b82f6';
-      MapModule.showTrip(trip.points, color);
+      try { MapModule.showTrip(trip.points, color); } catch {}
       document.getElementById('historyOverlay').classList.add('hidden');
     });
-    card.addEventListener('dblclick', () => {
-      const trip = trips[parseInt(card.dataset.index)];
-      const color = memberData[userId]?.color || '#3b82f6';
-      MapModule.replayTrip(trip.points, color);
-      document.getElementById('historyOverlay').classList.add('hidden');
+    card.addEventListener('mousedown', () => {
+      holdTimer = setTimeout(() => {
+        try { MapModule.replayTrip(trip.points, color); } catch {}
+        document.getElementById('historyOverlay').classList.add('hidden');
+      }, 600);
     });
+    card.addEventListener('touchstart', () => {
+      holdTimer = setTimeout(() => {
+        try { MapModule.replayTrip(trip.points, color); } catch {}
+        document.getElementById('historyOverlay').classList.add('hidden');
+      }, 600);
+    }, { passive: true });
+    card.addEventListener('mouseup',   () => clearTimeout(holdTimer));
+    card.addEventListener('touchend',  () => clearTimeout(holdTimer));
   });
+}
+
+// ── PWA Install ───────────────────────────────────────────────────────────────
+let _installPrompt = null;
+
+function setupInstall() {
+  const btn = document.getElementById('btnInstall');
+  if (!btn) return;
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    _installPrompt = e;
+    btn.classList.remove('hidden');
+  });
+
+  window.addEventListener('appinstalled', () => {
+    btn.classList.add('hidden');
+    _installPrompt = null;
+    showToast('✅ Application installée !', 'Family Tracker est sur votre écran d\'accueil', 'ok');
+  });
+
+  btn.addEventListener('click', async () => {
+    if (_installPrompt) {
+      _installPrompt.prompt();
+      const { outcome } = await _installPrompt.userChoice;
+      if (outcome === 'accepted') { _installPrompt = null; btn.classList.add('hidden'); }
+    } else if (/iPhone|iPad|iPod/.test(navigator.userAgent) && !window.navigator.standalone) {
+      showToast('📱 Installer sur iOS', 'Appuyez sur Partager ↑ puis « Sur l\'écran d\'accueil »', 'ok');
+    }
+  });
+
+  // Show on iOS if not already in standalone
+  if (/iPhone|iPad|iPod/.test(navigator.userAgent) && !window.navigator.standalone) {
+    btn.classList.remove('hidden');
+  }
 }
 
 function formatDuration(from, to) {
