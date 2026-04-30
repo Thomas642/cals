@@ -41,6 +41,9 @@ echo "DB_PASSWORD=$DB_PASS" >> /root/.ft_secrets
 APP_DIR="/var/www/familytracker"
 mkdir -p "$APP_DIR"
 
+# Download vendor assets (Leaflet) before copying frontend
+bash scripts/download-vendor.sh
+
 # Copy files (assumes script is run from repo root)
 cp -r ./frontend "$APP_DIR/"
 cp -r ./backend  "$APP_DIR/"
@@ -70,7 +73,7 @@ JWT_EXPIRES_IN=30d
 VAPID_PUBLIC_KEY=$VAPID_PUBLIC
 VAPID_PRIVATE_KEY=$VAPID_PRIVATE
 VAPID_EMAIL=mailto:${CERTBOT_EMAIL:-admin@example.com}
-FRONTEND_URL=https://$DOMAIN
+FRONTEND_URL=https://${DOMAIN}
 UPLOAD_DIR=$APP_DIR/uploads
 EOF
 
