@@ -31,6 +31,7 @@
         <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
       </svg>
       <span>Family Tracker</span>
+      <span id="trackingDot" class="tracking-dot" title="Suivi GPS actif"></span>
     </div>
     <div class="topbar-actions">
       <button id="btnInstall" class="btn btn-ghost btn-sm hidden" title="Installer l'application">
@@ -217,6 +218,11 @@
     <div class="form-group">
       <label>Intervalle GPS (secondes)</label>
       <input type="number" id="gpsInterval" min="5" max="300" value="30">
+    </div>
+    <div class="form-group">
+      <label>Alerte excès de vitesse (km/h, 0 = désactivé)</label>
+      <input type="number" id="speedLimit" min="0" max="300" value="110" placeholder="ex : 110">
+      <small class="text-muted">Vous et votre famille serez notifiés si cette limite est dépassée</small>
     </div>
     <button class="btn btn-primary btn-full" id="saveProfile">Enregistrer</button>
     <hr style="border-color:var(--border);margin:1rem 0">

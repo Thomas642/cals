@@ -8,10 +8,28 @@
       document.getElementById('navAdmin').classList.remove('hidden');
     }
 
-    const savedInterval = parseInt(localStorage.getItem('ft_interval')) || 30;
-    document.getElementById('gpsInterval').value = savedInterval;
+    const savedInterval   = parseInt(localStorage.getItem('ft_interval'))    || 30;
+    const savedSpeedLimit = parseInt(localStorage.getItem('ft_speed_limit')) || 110;
+    document.getElementById('gpsInterval').value  = savedInterval;
+    document.getElementById('speedLimit').value   = savedSpeedLimit;
 
-    try { GeoModule.start(savedInterval); } catch (e) { console.warn('[GPS]', e.message); }
+    try {
+      GeoModule.start(savedInterval);
+      GeoModule.setSpeedAlert(savedSpeedLimit, onSpeedAlert);
+    } catch (e) { console.warn('[GPS]', e.message); }
+
+    // Tracking indicator (Wake Lock status)
+    document.addEventListener('tracking-status', (e) => {
+      const dot = document.getElementById('trackingDot');
+      if (dot) dot.classList.toggle('active', e.detail.active);
+    });
+
+    // Warn when app goes to background
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        showToast('⚠️ Suivi en arrière-plan', 'Gardez l\'app ouverte pour continuer le trajet', 'warning');
+      }
+    });
 
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(console.warn);
@@ -49,6 +67,14 @@
     try { fn(); } catch (e) { console.warn(`[setup${name}]`, e.message); }
   }
 })();
+
+// ── Speed alert ───────────────────────────────────────────────────────────────
+async function onSpeedAlert(speedKmh, lat, lon) {
+  showToast(`⚠️ Vitesse : ${speedKmh} km/h`, 'Excès de vitesse détecté', 'warning');
+  try {
+    await API.post('/api/notify/speed-alert', { speed: speedKmh, latitude: lat, longitude: lon });
+  } catch {}
+}
 
 // ── Notification badge state ──────────────────────────────────────────────────
 const unread = { members: 0, zones: 0, admin: 0 };
@@ -116,6 +142,12 @@ function setupSocket() {
 
   socket.on('member_offline', (data) => {
     if (data?.member) showToast(`⚠️ ${data.member.name} est déconnecté(e)`, '');
+  });
+
+  socket.on('speed_alert', (data) => {
+    if (data?.member?.id === currentUser?.id) return;
+    showToast(`⚠️ ${data.member.name} — ${data.speed} km/h`, 'Excès de vitesse détecté', 'warning');
+    incBadge('members');
   });
 
   socket.on('connect_error', (err) => {
@@ -462,9 +494,12 @@ function setupProfile() {
   });
 
   document.getElementById('saveProfile').addEventListener('click', async () => {
-    const interval = parseInt(document.getElementById('gpsInterval').value) || 30;
-    localStorage.setItem('ft_interval', interval);
+    const interval    = parseInt(document.getElementById('gpsInterval').value)  || 30;
+    const speedLimit  = parseInt(document.getElementById('speedLimit').value)   || 0;
+    localStorage.setItem('ft_interval',    interval);
+    localStorage.setItem('ft_speed_limit', speedLimit);
     GeoModule.setInterval(interval);
+    GeoModule.setSpeedAlert(speedLimit, onSpeedAlert);
 
     try {
       const updated = await API.patch(`/api/members/${currentUser.id}`, {
