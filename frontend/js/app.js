@@ -1,47 +1,51 @@
 // ── Bootstrap ────────────────────────────────────────────────────────────────
 (async () => {
-  await loadCurrentUser();
+  try {
+    await loadCurrentUser();
+    MapModule.init();
 
-  MapModule.init();
+    if (currentUser.role === 'admin') {
+      document.getElementById('navAdmin').classList.remove('hidden');
+    }
 
-  // Show admin nav if admin
-  if (currentUser.role === 'admin') {
-    document.getElementById('navAdmin').classList.remove('hidden');
+    const savedInterval = parseInt(localStorage.getItem('ft_interval')) || 30;
+    document.getElementById('gpsInterval').value = savedInterval;
+
+    try { GeoModule.start(savedInterval); } catch (e) { console.warn('[GPS]', e.message); }
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(console.warn);
+    }
+
+    try { await refreshPositions(); } catch (e) { console.warn('[positions]', e.message); }
+    try { await loadZones(); } catch (e) { console.warn('[zones]', e.message); }
+    if (typeof loadPlaces === 'function') {
+      try { await loadPlaces(); } catch (e) { console.warn('[places]', e.message); }
+    }
+
+    setInterval(refreshPositions, 10_000);
+
+  } catch (e) {
+    console.error('[bootstrap init]', e);
   }
 
-  // Restore GPS interval preference
-  const savedInterval = parseInt(localStorage.getItem('ft_interval')) || 30;
-  document.getElementById('gpsInterval').value = savedInterval;
-
-  // Start GPS sharing
-  GeoModule.start(savedInterval);
-
-  // Register service worker
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').catch(console.warn);
+  // Setup UI — runs unconditionally even if init above partially failed
+  for (const [name, fn] of [
+    ['SOS',        setupSOS],
+    ['Privacy',    setupPrivacy],
+    ['Profile',    setupProfile],
+    ['History',    setupHistory],
+    ['Zones',      setupZones],
+    ['Places',     typeof setupPlaces === 'function' ? setupPlaces : null],
+    ['Navigation', setupNavigation],
+    ['Admin',      setupAdmin],
+    ['Locate',     setupLocate],
+    ['Socket',     setupSocket],
+  ]) {
+    if (!fn) continue;
+    try { fn(); } catch (e) { console.warn(`[setup${name}]`, e.message); }
   }
-
-  // Load initial data
-  await refreshPositions();
-  await loadZones();
-  await loadPlaces();
-
-  // Poll positions every 10 s (fallback if WS drops)
-  setInterval(refreshPositions, 10_000);
-
-  // Setup all UI first — must never be blocked by socket/GPS failures
-  setupSOS();
-  setupPrivacy();
-  setupProfile();
-  setupHistory();
-  setupZones();
-  setupPlaces();
-  setupNavigation();
-  setupAdmin();
-  setupLocate();
-
-  // Socket last: if io is undefined or connection fails, UI still works
-  try { setupSocket(); } catch (e) { console.warn('[WS] init failed:', e.message); }
+  }
 })();
 
 // ── Realtime via WebSocket ────────────────────────────────────────────────────
