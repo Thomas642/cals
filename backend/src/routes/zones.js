@@ -78,6 +78,42 @@ router.put('/:id', authenticate, async (req, res) => {
     res.json(rows[0]);
 });
 
+// PATCH /api/zones/:id/notify-toggle — toggle current user in/out of zone notify_members
+// Empty array = everyone notified (default). Non-empty = only listed users get push.
+router.patch('/:id/notify-toggle', authenticate, async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT notify_members FROM zones WHERE id = $1', [req.params.id]);
+        if (!rows[0]) return res.status(404).json({ error: 'Zone not found' });
+
+        const current = rows[0].notify_members || [];
+        const uid = req.user.id;
+        let updated;
+
+        if (current.length === 0) {
+            // Was "everyone" — get all active users except this one (they are opting out)
+            const { rows: allUsers } = await pool.query(
+                'SELECT id FROM users WHERE is_active = TRUE AND id != $1', [uid]
+            );
+            updated = allUsers.map((u) => u.id);
+        } else if (current.includes(uid)) {
+            updated = current.filter((id) => id !== uid);
+            // If list becomes empty → revert to "everyone"
+        } else {
+            updated = [...current, uid];
+        }
+
+        const { rows: saved } = await pool.query(
+            `UPDATE zones SET notify_members = $1 WHERE id = $2
+             RETURNING id, name, notify_members`,
+            [updated, req.params.id]
+        );
+        res.json(saved[0]);
+    } catch (err) {
+        console.error('[zones/notify-toggle]', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // DELETE /api/zones/:id
 router.delete('/:id', authenticate, async (req, res) => {
     const { rows } = await pool.query('SELECT created_by FROM zones WHERE id = $1', [req.params.id]);

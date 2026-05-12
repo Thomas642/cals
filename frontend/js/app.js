@@ -714,6 +714,14 @@ function setupHistory() {
     exportTripsCsv(userId, from, to, member?.name || 'membre');
   });
 
+  document.getElementById('exportGpxGlobalBtn')?.addEventListener('click', () => {
+    const userId = document.getElementById('historyMember').value;
+    const from   = document.getElementById('historyFrom').value;
+    const to     = document.getElementById('historyTo').value;
+    const member = Object.values(memberData).find((m) => m.id === userId);
+    exportGpxGlobal(userId, from, to, member?.name || 'membre');
+  });
+
   document.getElementById('closeHistory').addEventListener('click', () => {
     overlay.classList.add('hidden');
     try { MapModule.clearTrip(); } catch {}
@@ -938,21 +946,46 @@ function renderZoneList() {
     container.innerHTML = '<p class="text-muted">Aucune zone définie.</p>';
     return;
   }
-  container.innerHTML = zones.map((z) => `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:.5rem 0;border-bottom:1px solid var(--border)">
+  container.innerHTML = zones.map((z) => {
+    const notifyAll  = !z.notify_members || z.notify_members.length === 0;
+    const iNotified  = notifyAll || z.notify_members.includes(currentUser?.id);
+    const bellIcon   = iNotified ? '🔔' : '🔕';
+    const bellTitle  = iNotified ? 'Notifications actives — cliquer pour désactiver' : 'Notifications désactivées — cliquer pour activer';
+    return `
+    <div class="zone-row" data-zone-id="${z.id}">
       <div>
         <strong>${z.name}</strong>
-        <div class="text-muted">${z.radius} m</div>
+        <div class="text-muted">${z.radius} m${notifyAll ? '' : ` · ${z.notify_members.length} destinataire(s)`}</div>
       </div>
-      <button class="btn btn-danger btn-sm" data-id="${z.id}">Supprimer</button>
-    </div>`).join('');
+      <div style="display:flex;gap:.4rem;align-items:center">
+        <button class="btn btn-ghost btn-sm btn-zone-bell" title="${bellTitle}" data-zone-id="${z.id}">${bellIcon}</button>
+        <button class="btn btn-danger btn-sm btn-zone-del" data-id="${z.id}">✕</button>
+      </div>
+    </div>`;
+  }).join('');
 
-  container.querySelectorAll('[data-id]').forEach((btn) => {
+  container.querySelectorAll('.btn-zone-del').forEach((btn) => {
     btn.addEventListener('click', async () => {
       try {
         await API.delete(`/api/zones/${btn.dataset.id}`);
         await loadZones();
         renderZoneList();
+      } catch (err) {
+        showToast('Erreur', err.message);
+      }
+    });
+  });
+
+  container.querySelectorAll('.btn-zone-bell').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        const updated = await API.patch(`/api/zones/${btn.dataset.zoneId}/notify-toggle`, {});
+        // Update local zones array
+        const idx = zones.findIndex((z) => z.id === updated.id);
+        if (idx >= 0) zones[idx].notify_members = updated.notify_members;
+        renderZoneList();
+        const on = !updated.notify_members.length || updated.notify_members.includes(currentUser?.id);
+        showToast(on ? '🔔 Notifié(e)' : '🔕 Notifications désactivées', `Zone : ${updated.name}`);
       } catch (err) {
         showToast('Erreur', err.message);
       }
@@ -1275,6 +1308,25 @@ function setupNavigation() {
   document.getElementById('navChat').addEventListener('click', () => {
     clearBadge('chat');
     setupChatOpen();
+  });
+
+  // Alert history button
+  document.getElementById('btnAlertHistory')?.addEventListener('click', async () => {
+    const overlay = document.getElementById('alertHistoryOverlay');
+    if (!overlay) return;
+    overlay.classList.remove('hidden');
+    await loadAlertHistory('all');
+    // Wire type filter chips
+    overlay.querySelectorAll('.alert-filter-chip').forEach((chip) => {
+      chip.addEventListener('click', async () => {
+        overlay.querySelectorAll('.alert-filter-chip').forEach((c) => c.classList.remove('active'));
+        chip.classList.add('active');
+        await loadAlertHistory(chip.dataset.type);
+      });
+    });
+  });
+  document.getElementById('closeAlertHistory')?.addEventListener('click', () => {
+    document.getElementById('alertHistoryOverlay')?.classList.add('hidden');
   });
 }
 
@@ -1734,6 +1786,100 @@ async function exportTripsCsv(userId, from, to, memberName) {
   }
 }
 
+// ── Global GPX Export ─────────────────────────────────────────────────────────
+async function exportGpxGlobal(userId, from, to, memberName) {
+  try {
+    showToast('⬇️ Préparation GPX…', '');
+    const pts = await API.get(`/api/history/raw?userId=${userId}&from=${from}T00:00:00&to=${to}T23:59:59`);
+    if (!pts.length) { showToast('Aucun point GPS', 'Pas de données à exporter'); return; }
+
+    // Split into segments by 10-min gaps
+    const GAP_MS = 10 * 60_000;
+    const segments = [];
+    let seg = [pts[0]];
+    for (let i = 1; i < pts.length; i++) {
+      if (new Date(pts[i].recorded_at) - new Date(pts[i-1].recorded_at) > GAP_MS) {
+        segments.push(seg);
+        seg = [pts[i]];
+      } else {
+        seg.push(pts[i]);
+      }
+    }
+    segments.push(seg);
+
+    const fmt = (d) => new Date(d).toISOString();
+    const trksegs = segments.map((s) => `
+    <trkseg>
+${s.map((p) => `      <trkpt lat="${p.latitude}" lon="${p.longitude}"><time>${fmt(p.recorded_at)}</time>${p.speed ? `<speed>${(p.speed / 3.6).toFixed(2)}</speed>` : ''}</trkpt>`).join('\n')}
+    </trkseg>`).join('');
+
+    const gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="FamilyTracker" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><time>${fmt(from + 'T00:00:00')}</time></metadata>
+  <trk>
+    <name>${memberName} — ${from} → ${to}</name>${trksegs}
+  </trk>
+</gpx>`;
+
+    const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = `gps_${memberName}_${from}_${to}.gpx`; a.click();
+    URL.revokeObjectURL(url);
+    showToast('⬇️ GPX exporté', `${pts.length} points · ${segments.length} segment(s)`);
+  } catch (err) {
+    showToast('Erreur GPX', err.message);
+  }
+}
+
+// ── Alert history ─────────────────────────────────────────────────────────────
+const ALERT_ICONS = {
+  sos: '🆘', ok_signal: '✅', quick_message: '💬', speed_alert: '⚡',
+  geofence_enter: '📍', geofence_exit: '👋', battery: '🔋', disconnect: '📵',
+};
+const ALERT_LABELS = {
+  sos: 'SOS', ok_signal: 'Je suis OK', quick_message: 'Message rapide',
+  speed_alert: 'Excès vitesse', geofence_enter: 'Entrée zone', geofence_exit: 'Sortie zone',
+  battery: 'Batterie faible', disconnect: 'Déconnexion',
+};
+
+async function loadAlertHistory(typeFilter = 'all') {
+  const container = document.getElementById('alertHistoryContainer');
+  if (!container) return;
+  container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Chargement…</p>';
+
+  try {
+    const url = typeFilter === 'all'
+      ? '/api/notify/history?type=all&limit=50'
+      : `/api/notify/history?type=${typeFilter}&limit=50`;
+    const rows = await API.get(url);
+
+    if (!rows.length) {
+      container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Aucune alerte</p>';
+      return;
+    }
+
+    container.innerHTML = rows.map((r) => {
+      const icon  = ALERT_ICONS[r.type] || '📢';
+      const label = ALERT_LABELS[r.type] || r.type;
+      const when  = new Date(r.sent_at).toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+      const p     = r.payload || {};
+      const detail = p.text || (p.zone?.name ? `Zone: ${p.zone.name}` : p.speed ? `${p.speed} km/h` : '');
+      return `
+        <div class="alert-hist-row">
+          <span class="alert-hist-icon">${icon}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:.84rem;color:${r.sender_color || 'var(--text-2)'}">${r.sender_name || 'Système'} <span style="font-weight:400;color:var(--text-muted)">· ${label}</span></div>
+            ${detail ? `<div style="font-size:.77rem;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${detail}</div>` : ''}
+          </div>
+          <span style="font-size:.7rem;color:var(--text-muted);flex-shrink:0">${when}</span>
+        </div>`;
+    }).join('');
+  } catch (err) {
+    container.innerHTML = `<p class="text-danger" style="font-size:.82rem">Erreur : ${err.message}</p>`;
+  }
+}
+
 // ── Monthly stats (admin) ─────────────────────────────────────────────────────
 async function loadMonthStats() {
   try {
@@ -1835,13 +1981,22 @@ function setupSchedule() {
 }
 
 async function populateScheduleSelects() {
-  const members = Object.values(memberData);
-  const selM    = document.getElementById('schedMember');
-  const selZ    = document.getElementById('schedZone');
+  const selM = document.getElementById('schedMember');
+  const selZ = document.getElementById('schedZone');
   if (!selM || !selZ) return;
 
-  selM.innerHTML = members.map((m) => `<option value="${m.id}">${m.name}</option>`).join('');
-  selZ.innerHTML = zones.map((z) => `<option value="${z.id}">${z.name}</option>`).join('');
+  // Refresh both lists to ensure they're current
+  try { await loadZones(); } catch {}
+  try { await refreshPositions(); } catch {}
+
+  const members = Object.values(memberData);
+  selM.innerHTML = members.length
+    ? members.map((m) => `<option value="${m.id}">${m.name}</option>`).join('')
+    : '<option value="">Aucun membre</option>';
+
+  selZ.innerHTML = zones.length
+    ? zones.map((z) => `<option value="${z.id}">${z.name}</option>`).join('')
+    : '<option value="">Aucune zone — créez-en une d\'abord</option>';
 }
 
 // ── Crash detection (choc/accident) ──────────────────────────────────────────

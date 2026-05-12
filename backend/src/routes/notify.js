@@ -109,23 +109,36 @@ router.post('/message', authenticate, async (req, res) => {
 });
 
 // GET /api/notify/history
+// ?type=sos|ok_signal|quick_message|speed_alert|geofence_enter|geofence_exit|all
 router.get('/history', authenticate, async (req, res) => {
+    const VALID_TYPES = ['sos', 'ok_signal', 'quick_message', 'speed_alert',
+                         'geofence_enter', 'geofence_exit', 'battery', 'disconnect'];
     try {
-        const type  = ['sos', 'ok_signal', 'quick_message', 'speed_alert'].includes(req.query.type)
-            ? req.query.type : 'sos';
-        const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+        const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+        const type  = req.query.type;
 
-        const { rows } = await pool.query(
-            `SELECT nl.id, nl.type, nl.sent_at, nl.payload,
-                    u.name  AS sender_name,
-                    u.color AS sender_color
-             FROM notifications_log nl
-             LEFT JOIN users u ON nl.triggered_by = u.id
-             WHERE nl.type = $1
-             ORDER BY nl.sent_at DESC
-             LIMIT $2`,
-            [type, limit]
-        );
+        let query, params;
+        if (!type || type === 'all') {
+            query = `SELECT nl.id, nl.type, nl.sent_at, nl.payload,
+                            u.name  AS sender_name,
+                            u.color AS sender_color
+                     FROM notifications_log nl
+                     LEFT JOIN users u ON nl.triggered_by = u.id
+                     ORDER BY nl.sent_at DESC LIMIT $1`;
+            params = [limit];
+        } else {
+            const safeType = VALID_TYPES.includes(type) ? type : 'sos';
+            query = `SELECT nl.id, nl.type, nl.sent_at, nl.payload,
+                            u.name  AS sender_name,
+                            u.color AS sender_color
+                     FROM notifications_log nl
+                     LEFT JOIN users u ON nl.triggered_by = u.id
+                     WHERE nl.type = $1
+                     ORDER BY nl.sent_at DESC LIMIT $2`;
+            params = [safeType, limit];
+        }
+
+        const { rows } = await pool.query(query, params);
         res.json(rows);
     } catch (err) {
         console.error('[notify/history]', err);
