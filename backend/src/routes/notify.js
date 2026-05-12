@@ -114,6 +114,38 @@ router.get('/history', authenticate, async (req, res) => {
     res.json(rows);
 });
 
+// POST /api/notify/speed-alert  — driver exceeded speed limit
+router.post('/speed-alert', authenticate, async (req, res) => {
+    const { speed, latitude, longitude } = req.body;
+    if (!speed || speed <= 0) return res.status(400).json({ error: 'speed required' });
+
+    const payload = {
+        type: 'speed_alert',
+        member: { id: req.user.id, name: req.user.name, color: req.user.color },
+        speed,
+        latitude: latitude ?? null,
+        longitude: longitude ?? null,
+        sent_at: new Date().toISOString(),
+    };
+
+    await pool.query(
+        `INSERT INTO notifications_log (type, triggered_by, payload)
+         VALUES ('speed_alert', $1, $2)`,
+        [req.user.id, payload]
+    );
+
+    const io = req.app.get('io');
+    if (io) io.emit('speed_alert', payload);
+
+    await broadcastPush({
+        ...payload,
+        title: `⚠️ ${req.user.name} — Excès de vitesse`,
+        body:  `${speed} km/h détectés`,
+    }, req.user.id);
+
+    res.json({ message: 'Speed alert sent' });
+});
+
 // POST /api/notify/test  — send a test push to self
 router.post('/test', authenticate, async (req, res) => {
     const { rows } = await pool.query(
