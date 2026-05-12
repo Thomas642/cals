@@ -191,9 +191,11 @@
       <button class="shortcut-btn active" data-shortcut="today">Aujourd'hui</button>
       <button class="shortcut-btn" data-shortcut="yesterday">Hier</button>
       <button class="shortcut-btn" data-shortcut="week">7 jours</button>
+      <button class="shortcut-btn" data-shortcut="timeline">📅 Timeline</button>
       <button class="shortcut-btn" data-shortcut="stats">📊 Stats</button>
     </div>
     <div id="weekStatsContainer" class="hidden"></div>
+    <div id="timelineContainer" class="hidden"></div>
     <div style="display:flex;gap:.5rem;margin-bottom:.75rem">
       <div class="form-group" style="flex:1;margin-bottom:0">
         <label>Du</label>
@@ -243,6 +245,45 @@
     </div>
     <p class="text-muted mt-1">💡 Cliquez sur la carte pour positionner la zone</p>
     <button class="btn btn-primary btn-full mt-2" id="createZone">Créer la zone</button>
+    <hr style="border-color:var(--border);margin:1rem 0">
+    <div class="panel-title" style="font-size:.95rem">⏰ Planning & alertes horaires</div>
+    <p class="text-muted" style="font-size:.82rem;margin-bottom:.75rem">Alerte si un membre n'est pas dans une zone à l'heure prévue.</p>
+    <div id="scheduleList" class="mb-1"></div>
+    <div class="form-group">
+      <label>Membre</label>
+      <select id="schedMember"></select>
+    </div>
+    <div class="form-group">
+      <label>Zone attendue</label>
+      <select id="schedZone"></select>
+    </div>
+    <div class="form-group">
+      <label>Label</label>
+      <input type="text" id="schedLabel" placeholder="ex : Thomas à l'école">
+    </div>
+    <div style="display:flex;gap:.5rem">
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label>Heure</label>
+        <input type="time" id="schedTime" value="08:30">
+      </div>
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label>Tolérance (min)</label>
+        <input type="number" id="schedTolerance" value="15" min="1" max="60">
+      </div>
+    </div>
+    <div class="form-group" style="margin-top:.6rem">
+      <label>Jours</label>
+      <div class="day-chips">
+        <button class="day-chip active" data-day="1">L</button>
+        <button class="day-chip active" data-day="2">M</button>
+        <button class="day-chip active" data-day="3">M</button>
+        <button class="day-chip active" data-day="4">J</button>
+        <button class="day-chip active" data-day="5">V</button>
+        <button class="day-chip" data-day="6">S</button>
+        <button class="day-chip" data-day="7">D</button>
+      </div>
+    </div>
+    <button class="btn btn-ghost btn-full mt-1" id="createSchedule">Ajouter une alerte horaire</button>
     <button class="btn btn-ghost btn-full mt-1" id="closeZones">Fermer</button>
   </div>
 </div>

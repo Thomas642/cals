@@ -74,6 +74,7 @@
     ['Chat',          setupChat],
     ['Eta',           setupEta],
     ['DrivingMode',   setupDrivingMode],
+    ['Schedule',      setupSchedule],
   ]) {
     if (!fn) continue;
     try { fn(); } catch (e) { console.warn(`[setup${name}]`, e.message); }
@@ -223,6 +224,19 @@ function renderMemberList() {
         <span class="battery-pct">${bat}%</span>
       </span>` : '';
 
+    // ETA to home zone if member is moving
+    let etaHtml = '';
+    if (m.speed > 5 && m.latitude && m.longitude) {
+      const homeZone = zones.find((z) => z.name.toLowerCase().includes('maison') || z.name.toLowerCase().includes('home'));
+      if (homeZone) {
+        const distKm = haversineKm(m.latitude, m.longitude, homeZone.latitude, homeZone.longitude);
+        if (distKm > 0.2) {
+          const etaMin = Math.max(1, Math.round((distKm / m.speed) * 60 * 1.4));
+          etaHtml = `<span style="color:var(--primary-l)">🏠 ~${etaMin} min</span>`;
+        }
+      }
+    }
+
     card.innerHTML = `
       <div class="member-avatar-wrap">
         <div class="member-avatar" style="background:${m.color}">${avatarContent}</div>
@@ -233,6 +247,7 @@ function renderMemberList() {
         <div class="member-meta">
           ${batteryHtml}
           ${m.recorded_at ? `<span>${timeAgo(new Date(m.recorded_at))}</span>` : ''}
+          ${etaHtml}
         </div>
         ${m.status ? `<div style="font-size:.75rem;color:var(--text-muted);margin-top:.15rem">${m.status}</div>` : ''}
       </div>`;
@@ -646,13 +661,21 @@ function setupHistory() {
         const w = new Date(today); w.setDate(w.getDate() - 6);
         document.getElementById('historyFrom').value = fmt(w);
         document.getElementById('historyTo').value   = fmt(today);
+      } else if (btn.dataset.shortcut === 'timeline') {
+        document.getElementById('timelineContainer').classList.remove('hidden');
+        document.getElementById('weekStatsContainer').classList.add('hidden');
+        document.getElementById('tripList').innerHTML = '';
+        await loadTimeline();
+        return;
       } else if (btn.dataset.shortcut === 'stats') {
         document.getElementById('weekStatsContainer').classList.remove('hidden');
+        document.getElementById('timelineContainer').classList.add('hidden');
         document.getElementById('tripList').innerHTML = '';
         await loadWeekStats();
         return;
       }
       document.getElementById('weekStatsContainer').classList.add('hidden');
+      document.getElementById('timelineContainer').classList.add('hidden');
       await doLoadHistory();
     });
   });
@@ -681,6 +704,7 @@ async function doLoadHistory() {
   if (!userId) return;
 
   document.getElementById('weekStatsContainer')?.classList.add('hidden');
+  document.getElementById('timelineContainer')?.classList.add('hidden');
   const container = document.getElementById('tripList');
   container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Chargement…</p>';
 
@@ -1636,4 +1660,145 @@ async function loadMonthStats() {
     const rows = await API.get('/api/history/stats/month');
     return rows;
   } catch { return []; }
+}
+
+// ── Timeline journalière ──────────────────────────────────────────────────────
+const TIMELINE_ICONS = {
+  home: '🏠', work: '💼', school: '🏫', sport: '🏋️', shop: '🛒', star: '⭐', zone: '📍',
+};
+
+async function loadTimeline() {
+  const userId = document.getElementById('historyMember').value;
+  const date   = document.getElementById('historyFrom').value;
+  const container = document.getElementById('timelineContainer');
+  if (!userId || !date) return;
+
+  container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Chargement…</p>';
+
+  try {
+    const events = await API.get(`/api/history/timeline?userId=${userId}&date=${date}`);
+    if (!events.length) {
+      container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Aucune donnée ce jour</p>';
+      return;
+    }
+
+    const fmtTime = (d) => new Date(d).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const fmtDur  = (ms) => {
+      const m = Math.floor(ms / 60_000);
+      return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h${m % 60 > 0 ? ` ${m % 60}min` : ''}`;
+    };
+
+    container.innerHTML = `
+      <div class="timeline-title">📅 Timeline — ${new Date(date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
+      <div class="timeline-list">
+        ${events.map((ev) => {
+          const icon  = ev.type === 'stay' ? (TIMELINE_ICONS[ev.icon] || '📍') : '🚗';
+          const label = ev.type === 'stay'
+            ? (ev.label || 'Lieu inconnu')
+            : `En déplacement${ev.distance_m > 100 ? ` · ${(ev.distance_m / 1000).toFixed(1)} km` : ''}`;
+          const sub = ev.type === 'stay'
+            ? fmtDur(ev.duration_ms)
+            : (ev.avg_speed > 0 ? `${ev.avg_speed} km/h moy.` : '');
+          return `
+            <div class="timeline-item ${ev.type}">
+              <div class="timeline-time">${fmtTime(ev.started_at)}</div>
+              <div class="timeline-dot-wrap">
+                <div class="timeline-dot ${ev.type}"></div>
+                <div class="timeline-line"></div>
+              </div>
+              <div class="timeline-content">
+                <div class="timeline-icon">${icon}</div>
+                <div>
+                  <div class="timeline-label">${label}</div>
+                  ${sub ? `<div class="timeline-sub">${sub}</div>` : ''}
+                </div>
+              </div>
+            </div>`;
+        }).join('')}
+      </div>`;
+  } catch (err) {
+    container.innerHTML = `<p class="text-danger">Erreur : ${err.message}</p>`;
+  }
+}
+
+// ── Schedule alerts UI ────────────────────────────────────────────────────────
+function setupSchedule() {
+  // Populate member/zone selects when zones panel opens
+  document.getElementById('navZones').addEventListener('click', async () => {
+    await populateScheduleSelects();
+    await renderScheduleList();
+  }, { capture: true });
+
+  document.querySelectorAll('.day-chip').forEach((btn) => {
+    btn.addEventListener('click', () => btn.classList.toggle('active'));
+  });
+
+  document.getElementById('createSchedule').addEventListener('click', async () => {
+    const member_id     = document.getElementById('schedMember').value;
+    const zone_id       = document.getElementById('schedZone').value;
+    const label         = document.getElementById('schedLabel').value.trim();
+    const expected_time = document.getElementById('schedTime').value;
+    const tolerance_min = parseInt(document.getElementById('schedTolerance').value) || 15;
+    const days          = [...document.querySelectorAll('.day-chip.active')].map((b) => b.dataset.day);
+
+    if (!member_id || !zone_id || !expected_time) {
+      showToast('⚠️ Champs manquants', 'Membre, zone et heure sont requis'); return;
+    }
+
+    try {
+      await API.post('/api/schedule', { member_id, zone_id, label, expected_time, tolerance_min, days });
+      showToast('⏰ Alerte créée', label || `${expected_time}`);
+      document.getElementById('schedLabel').value = '';
+      await renderScheduleList();
+    } catch (err) { showToast('Erreur', err.message); }
+  });
+}
+
+async function populateScheduleSelects() {
+  const members = Object.values(memberData);
+  const selM    = document.getElementById('schedMember');
+  const selZ    = document.getElementById('schedZone');
+  if (!selM || !selZ) return;
+
+  selM.innerHTML = members.map((m) => `<option value="${m.id}">${m.name}</option>`).join('');
+  selZ.innerHTML = zones.map((z) => `<option value="${z.id}">${z.name}</option>`).join('');
+}
+
+async function renderScheduleList() {
+  const container = document.getElementById('scheduleList');
+  if (!container) return;
+  try {
+    const list = await API.get('/api/schedule');
+    if (!list.length) { container.innerHTML = ''; return; }
+
+    const dayNames = ['', 'L', 'M', 'M', 'J', 'V', 'S', 'D'];
+    container.innerHTML = list.map((a) => {
+      const daysStr = (a.days || []).map((d) => dayNames[d] || d).join(' ');
+      return `
+        <div class="sched-row">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:.84rem;color:${a.member_color}">${a.member_name}</div>
+            <div style="font-size:.78rem;color:var(--text-2)">${a.label || a.zone_name} · ${a.expected_time?.slice(0,5)} (±${a.tolerance_min}min)</div>
+            <div style="font-size:.7rem;color:var(--text-muted)">${daysStr}</div>
+          </div>
+          <div style="display:flex;gap:.3rem;flex-shrink:0">
+            <button class="btn btn-ghost btn-sm" data-sched-toggle="${a.id}">${a.active ? '⏸' : '▶'}</button>
+            <button class="btn btn-danger btn-sm" data-sched-del="${a.id}">✕</button>
+          </div>
+        </div>`;
+    }).join('');
+
+    container.querySelectorAll('[data-sched-toggle]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        await API.patch(`/api/schedule/${btn.dataset.schedToggle}/toggle`, {});
+        await renderScheduleList();
+      });
+    });
+    container.querySelectorAll('[data-sched-del]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        await API.delete(`/api/schedule/${btn.dataset.schedDel}`);
+        await renderScheduleList();
+      });
+    });
+  } catch { container.innerHTML = ''; }
 }

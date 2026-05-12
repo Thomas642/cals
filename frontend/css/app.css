@@ -893,6 +893,40 @@ hr[style*="border-color:var(--border)"] { opacity: .6; }
 .week-stat-km { font-size: .92rem; font-weight: 800; color: var(--primary-l); }
 .week-stat-meta { font-size: .72rem; color: var(--text-muted); }
 
+/* ─── Timeline journalière ──────────────────────────────────────────────────── */
+.timeline-title {
+  font-size: .8rem; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .07em; margin-bottom: .75rem;
+}
+.timeline-list { display: flex; flex-direction: column; }
+.timeline-item { display: flex; gap: .5rem; align-items: flex-start; min-height: 40px; }
+.timeline-time { font-size: .72rem; color: var(--text-muted); width: 38px; flex-shrink: 0; padding-top: .15rem; text-align: right; }
+.timeline-dot-wrap { display: flex; flex-direction: column; align-items: center; width: 20px; flex-shrink: 0; }
+.timeline-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: .2rem; }
+.timeline-dot.stay { background: var(--primary); box-shadow: 0 0 0 3px rgba(99,102,241,.25); }
+.timeline-dot.trip { background: var(--text-muted); }
+.timeline-line { flex: 1; width: 2px; background: var(--border); min-height: 20px; }
+.timeline-content { display: flex; gap: .4rem; align-items: flex-start; flex: 1; padding-bottom: .75rem; }
+.timeline-icon { font-size: 1rem; margin-top: .05rem; }
+.timeline-label { font-size: .86rem; font-weight: 600; color: var(--text); }
+.timeline-sub { font-size: .72rem; color: var(--text-muted); margin-top: .1rem; }
+
+/* ─── Schedule (alertes horaires) ───────────────────────────────────────────── */
+.sched-row {
+  display: flex; align-items: center; gap: .5rem; padding: .5rem .6rem;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius); margin-bottom: .4rem;
+}
+.day-chips { display: flex; gap: .3rem; }
+.day-chip {
+  width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid var(--border);
+  background: var(--surface2); color: var(--text-muted); font-family: var(--font);
+  font-size: .78rem; font-weight: 700; cursor: pointer; transition: all .15s;
+  display: flex; align-items: center; justify-content: center;
+}
+.day-chip:hover { border-color: var(--border2); color: var(--text-2); }
+.day-chip.active { border-color: var(--primary); background: rgba(99,102,241,.15); color: var(--primary-l); }
+
 /* ─── Monthly stats table (admin) ──────────────────────────────────────────── */
 .month-stats-table { font-size: .8rem; }
 .month-stats-head, .month-stats-row {

@@ -18,7 +18,8 @@ const zonesRoutes = require('./routes/zones');
 const membersRoutes = require('./routes/members');
 const notifyRoutes = require('./routes/notify');
 const chatRoutes   = require('./routes/chat');
-const shareRoutes  = require('./routes/share');
+const shareRoutes    = require('./routes/share');
+const scheduleRoutes = require('./routes/schedule');
 const { startWatchdog } = require('./services/watchdog');
 const placesRoutes = require('./routes/places');
 
@@ -114,8 +115,9 @@ app.use('/api/zones', apiLimiter, zonesRoutes);
 app.use('/api/members', apiLimiter, membersRoutes);
 app.use('/api/notify', apiLimiter, notifyRoutes);
 app.use('/api/chat',   apiLimiter, chatRoutes);
-app.use('/api/share',  apiLimiter, shareRoutes);
-app.use('/api/places', apiLimiter, placesRoutes);
+app.use('/api/share',    apiLimiter, shareRoutes);
+app.use('/api/places',   apiLimiter, placesRoutes);
+app.use('/api/schedule', apiLimiter, scheduleRoutes);
 
 // VAPID public key (needed by the frontend to subscribe to push)
 app.get('/api/push-key', (_, res) => {
@@ -225,6 +227,21 @@ async function runMigrations() {
             user_id    UUID NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
             entered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             PRIMARY KEY (zone_id, user_id)
+        )
+    `);
+
+    // Schedule alerts (planning + alertes horaires)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS schedule_alerts (
+            id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            member_id     UUID NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
+            zone_id       UUID NOT NULL REFERENCES zones(id)  ON DELETE CASCADE,
+            label         VARCHAR(100) NOT NULL DEFAULT '',
+            expected_time TIME NOT NULL,
+            tolerance_min INT  NOT NULL DEFAULT 15,
+            days          TEXT[] NOT NULL DEFAULT '{1,2,3,4,5}',
+            active        BOOL NOT NULL DEFAULT TRUE,
+            created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     `);
 }
