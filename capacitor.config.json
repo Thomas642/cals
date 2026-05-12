@@ -3,6 +3,7 @@
   "appName": "FamilyTracker",
   "webDir": "frontend",
   "server": {
+    "url": "https://famille.gameone-val.com",
     "androidScheme": "https",
     "cleartext": false
   },
