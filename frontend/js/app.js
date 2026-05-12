@@ -1835,13 +1835,22 @@ function setupSchedule() {
 }
 
 async function populateScheduleSelects() {
-  const members = Object.values(memberData);
-  const selM    = document.getElementById('schedMember');
-  const selZ    = document.getElementById('schedZone');
+  const selM = document.getElementById('schedMember');
+  const selZ = document.getElementById('schedZone');
   if (!selM || !selZ) return;
 
-  selM.innerHTML = members.map((m) => `<option value="${m.id}">${m.name}</option>`).join('');
-  selZ.innerHTML = zones.map((z) => `<option value="${z.id}">${z.name}</option>`).join('');
+  // Refresh both lists to ensure they're current
+  try { await loadZones(); } catch {}
+  try { await refreshPositions(); } catch {}
+
+  const members = Object.values(memberData);
+  selM.innerHTML = members.length
+    ? members.map((m) => `<option value="${m.id}">${m.name}</option>`).join('')
+    : '<option value="">Aucun membre</option>';
+
+  selZ.innerHTML = zones.length
+    ? zones.map((z) => `<option value="${z.id}">${z.name}</option>`).join('')
+    : '<option value="">Aucune zone — créez-en une d\'abord</option>';
 }
 
 // ── Crash detection (choc/accident) ──────────────────────────────────────────
