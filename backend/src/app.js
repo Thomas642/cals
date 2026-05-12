@@ -293,6 +293,33 @@ async function runMigrations() {
             PRIMARY KEY (message_id, user_id)
         )
     `);
+
+    // Performance indexes — composite indexes that match common query patterns
+    // (idempotent: CREATE INDEX IF NOT EXISTS is safe to run on every boot)
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS positions_user_recorded_idx
+            ON positions(user_id, recorded_at DESC)
+    `);
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS notifications_log_triggered_sent_idx
+            ON notifications_log(triggered_by, sent_at DESC)
+    `);
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS messages_user_sent_idx
+            ON messages(user_id, sent_at DESC)
+    `);
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS share_tokens_user_expires_idx
+            ON share_tokens(user_id, expires_at DESC)
+    `);
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS message_reactions_message_idx
+            ON message_reactions(message_id)
+    `);
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS schedule_alerts_member_active_idx
+            ON schedule_alerts(member_id, active)
+    `);
 }
 
 // ── Start ────────────────────────────────────────────────────────────────────
