@@ -39,7 +39,12 @@ const server = http.createServer(app);
 // ── Socket.io ────────────────────────────────────────────────────────────────
 const io = new Server(server, {
     cors: {
-        origin: process.env.FRONTEND_URL || '*',
+        origin: (origin, cb) => {
+            if (!origin) return cb(null, true);
+            if (_allowedOrigins.has(origin)) return cb(null, true);
+            if (!process.env.FRONTEND_URL) return cb(null, true);
+            cb(new Error(`CORS blocked: ${origin}`));
+        },
         credentials: true,
     },
 });
@@ -80,8 +85,23 @@ app.use(helmet({
     contentSecurityPolicy: false, // handled by Nginx
 }));
 
+// Accept both the web origin and the Capacitor native app origins
+const _allowedOrigins = new Set([
+    process.env.FRONTEND_URL,
+    'capacitor://localhost',
+    'https://localhost',
+    'http://localhost',
+].filter(Boolean));
+
 app.use(cors({
-    origin: process.env.FRONTEND_URL || '*',
+    origin: (origin, cb) => {
+        // No origin = server-to-server or same-origin — allow
+        if (!origin) return cb(null, true);
+        if (_allowedOrigins.has(origin)) return cb(null, true);
+        // Fallback: allow everything if no FRONTEND_URL configured
+        if (!process.env.FRONTEND_URL) return cb(null, true);
+        cb(new Error(`CORS blocked: ${origin}`));
+    },
     credentials: true,
 }));
 
@@ -245,6 +265,26 @@ async function runMigrations() {
             days          TEXT[] NOT NULL DEFAULT '{1,2,3,4,5}',
             active        BOOL NOT NULL DEFAULT TRUE,
             created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    `);
+
+    // Zones: type + curfew
+    await pool.query(`ALTER TABLE zones ADD COLUMN IF NOT EXISTS zone_type VARCHAR(20) NOT NULL DEFAULT 'standard'`);
+    await pool.query(`ALTER TABLE zones ADD COLUMN IF NOT EXISTS curfew_start TIME`);
+    await pool.query(`ALTER TABLE zones ADD COLUMN IF NOT EXISTS curfew_end TIME`);
+
+    // Users: check-in support
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_checkin_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS checkin_interval_min INT`);
+
+    // Chat reactions
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS message_reactions (
+            message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+            user_id    UUID NOT NULL REFERENCES users(id)    ON DELETE CASCADE,
+            emoji      VARCHAR(10) NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (message_id, user_id)
         )
     `);
 }

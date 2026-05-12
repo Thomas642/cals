@@ -1,0 +1,25 @@
+{
+  "appId": "com.familytracker.app",
+  "appName": "FamilyTracker",
+  "webDir": "frontend",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": false
+  },
+  "plugins": {
+    "BackgroundGeolocation": {
+      "notificationTitle": "FamilyTracker actif",
+      "notificationText": "Partage de position en cours…",
+      "notificationIconColor": "#3b82f6",
+      "stopsOnTerminate": false,
+      "startOnBoot": false,
+      "requestPermissions": true,
+      "distanceFilter": 10
+    }
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  }
+}

@@ -77,6 +77,9 @@
     ['Schedule',      setupSchedule],
     ['CrashDetect',   setupCrashDetection],
     ['Heatmap',       setupHeatmap],
+    ['SafeReturn',    setupSafeReturn],
+    ['Checkin',       setupCheckin],
+    ['ChatReactions', setupChatReactions],
   ]) {
     if (!fn) continue;
     try { fn(); } catch (e) { console.warn(`[setup${name}]`, e.message); }
@@ -110,7 +113,13 @@ function clearBadge(key) {
 let socket;
 
 function setupSocket() {
-  socket = io({ auth: { token: localStorage.getItem('ft_token') } });
+  // In Capacitor the page has no origin, so io() must connect to the explicit server URL.
+  const socketUrl = (window.Capacitor?.isNativePlatform?.())
+    ? 'https://famille.gameone-val.com'
+    : undefined;
+  socket = socketUrl
+    ? io(socketUrl, { auth: { token: localStorage.getItem('ft_token') } })
+    : io({ auth: { token: localStorage.getItem('ft_token') } });
 
   socket.on('position_update', (data) => {
     MapModule.updateMember(data);
@@ -178,6 +187,13 @@ function setupSocket() {
 
   socket.on('chat_delete', ({ id }) => {
     document.querySelector(`[data-msg-id="${id}"]`)?.remove();
+  });
+
+  socket.on('status_update', (data) => {
+    if (memberData[data.user_id]) {
+      memberData[data.user_id].status = data.status;
+      renderMemberList();
+    }
   });
 
   socket.on('connect_error', (err) => {
@@ -679,6 +695,7 @@ function setupHistory() {
         document.getElementById('timelineContainer').classList.remove('hidden');
         document.getElementById('weekStatsContainer').classList.add('hidden');
         document.getElementById('routinesContainer')?.classList.add('hidden');
+        document.getElementById('rankingContainer')?.classList.add('hidden');
         document.getElementById('tripList').innerHTML = '';
         await loadTimeline();
         return;
@@ -686,15 +703,26 @@ function setupHistory() {
         document.getElementById('weekStatsContainer').classList.remove('hidden');
         document.getElementById('timelineContainer').classList.add('hidden');
         document.getElementById('routinesContainer')?.classList.add('hidden');
+        document.getElementById('rankingContainer')?.classList.add('hidden');
         document.getElementById('tripList').innerHTML = '';
         await loadWeekStats();
+        await loadWeeklyTrend();
         return;
       } else if (btn.dataset.shortcut === 'routines') {
         document.getElementById('routinesContainer')?.classList.remove('hidden');
         document.getElementById('weekStatsContainer').classList.add('hidden');
         document.getElementById('timelineContainer').classList.add('hidden');
+        document.getElementById('rankingContainer')?.classList.add('hidden');
         document.getElementById('tripList').innerHTML = '';
         await loadRoutines();
+        return;
+      } else if (btn.dataset.shortcut === 'ranking') {
+        document.getElementById('rankingContainer')?.classList.remove('hidden');
+        document.getElementById('weekStatsContainer').classList.add('hidden');
+        document.getElementById('timelineContainer').classList.add('hidden');
+        document.getElementById('routinesContainer')?.classList.add('hidden');
+        document.getElementById('tripList').innerHTML = '';
+        await loadMonthRanking();
         return;
       }
       document.getElementById('weekStatsContainer').classList.add('hidden');
@@ -737,6 +765,7 @@ async function doLoadHistory() {
 
   document.getElementById('weekStatsContainer')?.classList.add('hidden');
   document.getElementById('timelineContainer')?.classList.add('hidden');
+  document.getElementById('rankingContainer')?.classList.add('hidden');
   const container = document.getElementById('tripList');
   container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Chargement…</p>';
 
@@ -1409,26 +1438,44 @@ function appendChatMessage(msg) {
   wrap.dataset.time   = new Date(msg.sent_at).getTime();
   wrap.dataset.msgId  = msg.id;
 
+  const reactionsHtml = (msg.reactions && msg.reactions.length)
+    ? `<div class="chat-reactions">${groupReactions(msg.reactions).map(r =>
+        `<button class="reaction-chip${r.users.includes(currentUser?.id) ? ' mine' : ''}" data-msg="${msg.id}" data-emoji="${r.emoji}">${r.emoji} ${r.count}</button>`
+      ).join('')}</div>`
+    : `<div class="chat-reactions" data-msg-reactions="${msg.id}"></div>`;
+
   wrap.innerHTML = `
     ${!isMine && !grouped ? `
       <div class="chat-avatar" style="background:${msg.color}">${avatarContent}</div>
     ` : `<div class="chat-avatar-spacer"></div>`}
     <div class="chat-bubble-col">
       ${!isMine && !grouped ? `<div class="chat-sender">${msg.name}</div>` : ''}
-      <div class="chat-bubble">
+      <div class="chat-bubble" data-bubble-id="${msg.id}">
         <span class="chat-text">${escapeHtml(msg.text)}</span>
         <span class="chat-time">${time}</span>
       </div>
+      ${reactionsHtml}
     </div>`;
 
-  // Long-press to delete own messages
+  // Long-press to delete own messages or open emoji picker for others
+  let holdTimer = null;
+  const bubble = wrap.querySelector('.chat-bubble');
   if (isMine) {
-    let holdTimer = null;
     wrap.addEventListener('mousedown',  () => { holdTimer = setTimeout(() => confirmDeleteMsg(msg.id, wrap), 600); });
     wrap.addEventListener('touchstart', () => { holdTimer = setTimeout(() => confirmDeleteMsg(msg.id, wrap), 600); }, { passive: true });
     wrap.addEventListener('mouseup',    () => clearTimeout(holdTimer));
     wrap.addEventListener('touchend',   () => clearTimeout(holdTimer));
+  } else {
+    bubble.addEventListener('mousedown',  () => { holdTimer = setTimeout(() => showEmojiPicker(msg.id, bubble), 600); });
+    bubble.addEventListener('touchstart', () => { holdTimer = setTimeout(() => showEmojiPicker(msg.id, bubble), 600); }, { passive: true });
+    bubble.addEventListener('mouseup',    () => clearTimeout(holdTimer));
+    bubble.addEventListener('touchend',   () => clearTimeout(holdTimer));
   }
+
+  // Reaction chip clicks
+  wrap.querySelectorAll('.reaction-chip').forEach((chip) => {
+    chip.addEventListener('click', () => toggleReaction(msg.id, chip.dataset.emoji));
+  });
 
   container.appendChild(wrap);
 }
@@ -1473,77 +1520,100 @@ function escapeHtml(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ── ETA ───────────────────────────────────────────────────────────────────────
-let cachedPlaces = [];
+// ── Chat reactions helpers ────────────────────────────────────────────────────
+function groupReactions(reactions) {
+  const map = new Map();
+  for (const r of reactions) {
+    if (!map.has(r.emoji)) map.set(r.emoji, { emoji: r.emoji, count: 0, users: [] });
+    const entry = map.get(r.emoji);
+    entry.count++;
+    if (r.user_id) entry.users.push(r.user_id);
+  }
+  return Array.from(map.values());
+}
 
-function setupEta() {
-  const etaBtn = document.getElementById('etaBtn');
-  const overlay = document.getElementById('etaOverlay');
+const EMOJI_PICKER_LIST = ['👍','❤️','😂','😮','😢','🙏'];
 
-  etaBtn.addEventListener('click', async () => {
-    const latlng = GeoModule.getCurrentLatLng();
-    if (!latlng) {
-      showToast('⚠️ Position inconnue', 'Activez le partage GPS d\'abord', 'warning');
-      return;
-    }
+function showEmojiPicker(msgId, anchor) {
+  // Remove any existing picker
+  document.querySelector('.emoji-picker')?.remove();
 
-    // Load places if not cached
-    if (!cachedPlaces.length) {
-      try { cachedPlaces = await API.get('/api/places'); } catch {}
-    }
+  const picker = document.createElement('div');
+  picker.className = 'emoji-picker';
+  EMOJI_PICKER_LIST.forEach((emoji) => {
+    const btn = document.createElement('button');
+    btn.className = 'emoji-picker-btn';
+    btn.textContent = emoji;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      picker.remove();
+      toggleReaction(msgId, emoji);
+    });
+    picker.appendChild(btn);
+  });
 
-    const speed = GeoModule.getCurrentSpeed(); // km/h
-    const effectiveSpeed = speed > 10 ? speed : 30; // default 30 km/h if stationary
+  anchor.style.position = 'relative';
+  anchor.appendChild(picker);
 
-    const list = document.getElementById('etaPlaceList');
-    if (!cachedPlaces.length) {
-      list.innerHTML = '<p class="text-muted" style="font-size:.82rem">Aucun lieu favori enregistré. Créez-en depuis la carte (appui long).</p>';
+  // Close on outside click
+  setTimeout(() => {
+    document.addEventListener('click', () => picker.remove(), { once: true });
+  }, 0);
+}
+
+async function toggleReaction(msgId, emoji) {
+  try {
+    // Check if user already reacted with this emoji
+    const wrap = document.querySelector(`[data-msg-id="${msgId}"]`);
+    const chip = wrap?.querySelector(`.reaction-chip[data-emoji="${emoji}"]`);
+    const isMine = chip?.classList.contains('mine');
+
+    if (isMine) {
+      await API.delete(`/api/chat/${msgId}/react`);
     } else {
-      list.innerHTML = cachedPlaces.map((p) => {
-        const distKm = haversineKm(latlng[0], latlng[1], p.latitude, p.longitude);
-        const etaMin = Math.round((distKm / effectiveSpeed) * 60);
-        const etaStr = etaMin < 1 ? '< 1 min' : etaMin < 60 ? `${etaMin} min` : `${Math.floor(etaMin/60)}h${etaMin%60 > 0 ? ` ${etaMin%60}min` : ''}`;
-        const icon   = { home:'🏠', work:'💼', school:'🏫', sport:'🏋️', shop:'🛒', star:'⭐' }[p.icon] || '📍';
-        return `
-          <div class="eta-place-row" data-name="${escapeHtml(p.name)}" data-eta="${etaStr}" data-icon="${icon}">
-            <div class="eta-place-info">
-              <span class="eta-place-icon">${icon}</span>
-              <span class="eta-place-name">${p.name}</span>
-            </div>
-            <div class="eta-place-time">
-              <span class="eta-place-duration">${etaStr}</span>
-              <span class="eta-place-dist">${distKm < 1 ? `${Math.round(distKm*1000)} m` : `${distKm.toFixed(1)} km`}</span>
-            </div>
-          </div>`;
-      }).join('');
-
-      list.querySelectorAll('.eta-place-row').forEach((row) => {
-        row.addEventListener('click', async () => {
-          const msg = `${row.dataset.icon} J'arrive dans ~${row.dataset.eta} à ${row.dataset.name}`;
-          await sendEta(msg);
-          overlay.classList.add('hidden');
-        });
-      });
+      await API.post(`/api/chat/${msgId}/react`, { emoji });
     }
+    // UI will be updated via socket event or refresh
+    await refreshMessageReactions(msgId);
+  } catch (err) {
+    showToast('Erreur', err.message);
+  }
+}
 
-    overlay.classList.remove('hidden');
-  });
+async function refreshMessageReactions(msgId) {
+  try {
+    const messages = await API.get(`/api/chat?limit=1&before=${new Date().toISOString()}`);
+    // Find the specific message reaction container and update it
+    const wrap = document.querySelector(`[data-msg-id="${msgId}"]`);
+    if (!wrap) return;
+    // Re-fetch just this message
+    const allMsgs = await API.get('/api/chat?limit=50');
+    const msg = allMsgs.find((m) => m.id === msgId);
+    if (!msg) return;
+    const reactionsDiv = wrap.querySelector('.chat-reactions');
+    if (!reactionsDiv) return;
+    const grouped = groupReactions(msg.reactions || []);
+    reactionsDiv.innerHTML = grouped.map(r =>
+      `<button class="reaction-chip${r.users.includes(currentUser?.id) ? ' mine' : ''}" data-msg="${msgId}" data-emoji="${r.emoji}">${r.emoji} ${r.count}</button>`
+    ).join('');
+    reactionsDiv.querySelectorAll('.reaction-chip').forEach((chip) => {
+      chip.addEventListener('click', () => toggleReaction(msgId, chip.dataset.emoji));
+    });
+  } catch {}
+}
 
-  document.getElementById('etaSendCustom').addEventListener('click', async () => {
-    const dest = document.getElementById('etaCustomDest').value.trim();
-    if (!dest) { showToast('⚠️ Entrez une destination', ''); return; }
-    const latlng = GeoModule.getCurrentLatLng();
-    const speed  = latlng ? GeoModule.getCurrentSpeed() : 0;
-    // Can't calculate distance without a known place → just send without ETA time
-    await sendEta(`📍 En route vers ${dest}`);
-    document.getElementById('etaCustomDest').value = '';
-    overlay.classList.add('hidden');
-  });
-
-  document.getElementById('closeEta').addEventListener('click', () => {
-    overlay.classList.add('hidden');
+function setupChatReactions() {
+  if (!socket) return;
+  socket.on('chat_reaction', async (data) => {
+    // Refresh reactions for the affected message
+    if (data.message_id) {
+      await refreshMessageReactions(data.message_id);
+    }
   });
 }
+
+// ── ETA ───────────────────────────────────────────────────────────────────────
+let cachedPlaces = [];
 
 async function sendEta(text) {
   try {
@@ -2094,6 +2164,361 @@ async function loadRoutines() {
         </div>`).join('')}`;
   } catch (err) {
     container.innerHTML = `<p class="text-danger">Erreur : ${err.message}</p>`;
+  }
+}
+
+// ── Feature 9: Mode "Je rentre seul(e)" ──────────────────────────────────────
+let _safeReturnTimer = null;
+let _safeReturnInterval = null;
+let _safeReturnDest = null;
+let _safeReturnMinutes = 15;
+
+function setupSafeReturn() {
+  document.getElementById('btnProfile').addEventListener('click', async () => {
+    const places = await API.get('/api/places').catch(() => []);
+    const sel = document.getElementById('safeReturnDest');
+    if (sel) sel.innerHTML = places.length
+      ? places.map(p => `<option value="${p.latitude},${p.longitude}">${p.name}</option>`).join('')
+      : '<option>Aucun lieu sauvegardé</option>';
+  }, { capture: false });
+
+  document.querySelectorAll('#safeReturnChips .profile-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('#safeReturnChips .profile-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      _safeReturnMinutes = parseInt(chip.dataset.minutes);
+    });
+  });
+
+  document.getElementById('startSafeReturn')?.addEventListener('click', () => {
+    if (_safeReturnTimer) { cancelSafeReturn(); return; }
+
+    const destVal = document.getElementById('safeReturnDest')?.value;
+    if (destVal && destVal.includes(',')) {
+      const [lat, lon] = destVal.split(',').map(Number);
+      _safeReturnDest = { lat, lon };
+    }
+
+    _safeReturnMinutes = parseInt(document.querySelector('#safeReturnChips .profile-chip.active')?.dataset.minutes) || 15;
+    let remaining = _safeReturnMinutes * 60;
+
+    showToast(`🚶 Retour armé`, `SOS dans ${_safeReturnMinutes} min si pas arrivé`, 'ok');
+    const btn = document.getElementById('startSafeReturn');
+    btn.textContent = `⏱ Annuler (${_safeReturnMinutes} min)`;
+    btn.classList.add('btn-danger');
+    document.getElementById('closeProfile')?.click();
+
+    _safeReturnInterval = setInterval(() => {
+      remaining -= 30;
+      if (_safeReturnDest) {
+        const latlng = GeoModule.getCurrentLatLng();
+        if (latlng) {
+          const dist = haversineKm(latlng[0], latlng[1], _safeReturnDest.lat, _safeReturnDest.lon) * 1000;
+          if (dist < 200) {
+            cancelSafeReturn();
+            showToast('✅ Arrivée détectée !', 'Mode retour désarmé automatiquement', 'ok');
+            return;
+          }
+        }
+      }
+      if (remaining <= 0) {
+        clearInterval(_safeReturnInterval);
+        _safeReturnInterval = null;
+        _safeReturnTimer = null;
+        triggerSafeReturnSOS();
+      }
+    }, 30_000);
+
+    _safeReturnTimer = true;
+  });
+}
+
+function cancelSafeReturn() {
+  if (_safeReturnInterval) { clearInterval(_safeReturnInterval); _safeReturnInterval = null; }
+  _safeReturnTimer = null;
+  _safeReturnDest = null;
+  const btn = document.getElementById('startSafeReturn');
+  if (btn) { btn.textContent = '🚶 Armer le retour'; btn.classList.remove('btn-danger'); }
+}
+
+async function triggerSafeReturnSOS() {
+  showToast('🆘 SOS retour automatique', "Vous n'êtes pas arrivé à destination", 'sos');
+  try {
+    const latlng = GeoModule.getCurrentLatLng();
+    await API.post('/api/notify/sos', latlng ? { latitude: latlng[0], longitude: latlng[1] } : {});
+  } catch {}
+}
+
+// ── Feature 10: Check-in régulier ───────────────────────────────────────────
+let _checkinInterval = null;
+let _checkinTimer = null;
+
+function setupCheckin() {
+  const toggle = document.getElementById('checkinToggle');
+  const intervalSel = document.getElementById('checkinInterval');
+  if (!toggle) return;
+
+  toggle.addEventListener('change', () => {
+    if (toggle.checked) {
+      intervalSel?.classList.remove('hidden');
+      startCheckin();
+    } else {
+      intervalSel?.classList.add('hidden');
+      stopCheckin();
+    }
+  });
+
+  intervalSel?.addEventListener('change', () => {
+    if (toggle.checked) {
+      stopCheckin();
+      startCheckin();
+    }
+  });
+}
+
+function startCheckin() {
+  stopCheckin();
+  const intervalSel = document.getElementById('checkinInterval');
+  const intervalMin = parseInt(intervalSel?.value) || 60;
+  const intervalMs = intervalMin * 60 * 1000;
+
+  _checkinInterval = setInterval(() => {
+    showCheckinPrompt(intervalMin);
+  }, intervalMs);
+
+  showToast('✋ Check-in activé', `Confirmation requise toutes les ${intervalMin} min`, 'ok');
+}
+
+function stopCheckin() {
+  if (_checkinInterval) { clearInterval(_checkinInterval); _checkinInterval = null; }
+  if (_checkinTimer) { clearTimeout(_checkinTimer); _checkinTimer = null; }
+}
+
+function showCheckinPrompt(intervalMin) {
+  showToast('✋ Check-in requis', 'Appuyez pour confirmer votre présence', 'warning');
+
+  // Auto-alert after 5 min if no response
+  _checkinTimer = setTimeout(async () => {
+    showToast('⚠️ Check-in manqué', 'La famille a été alertée de votre absence de réponse', 'warning');
+    try {
+      await API.post('/api/notify/message', { text: `⚠️ ${currentUser?.name || 'Un membre'} n'a pas confirmé son check-in` });
+    } catch {}
+  }, 5 * 60 * 1000);
+
+  // Create a dismissable toast with confirm action
+  const toastContainer = document.getElementById('toastContainer');
+  if (!toastContainer) return;
+
+  const confirmToast = document.createElement('div');
+  confirmToast.className = 'toast toast-warning';
+  confirmToast.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem">
+      <span>✋ Confirmez votre présence</span>
+      <button class="btn btn-primary btn-sm" id="checkinConfirmBtn">Je suis là ✅</button>
+    </div>`;
+  toastContainer.appendChild(confirmToast);
+
+  confirmToast.querySelector('#checkinConfirmBtn')?.addEventListener('click', async () => {
+    if (_checkinTimer) { clearTimeout(_checkinTimer); _checkinTimer = null; }
+    confirmToast.remove();
+    try {
+      await API.patch(`/api/members/${currentUser.id}`, { last_checkin_at: new Date().toISOString() });
+      showToast('✅ Check-in confirmé', '', 'ok');
+    } catch {}
+  });
+
+  // Auto-remove after 5 minutes
+  setTimeout(() => confirmToast.remove(), 5 * 60 * 1000);
+}
+
+// ── Feature 11: Partage de destination (RDV) ─────────────────────────────────
+// Extends setupEta — adds RDV section after the places list
+
+function setupEta() {
+  const etaBtn = document.getElementById('etaBtn');
+  const overlay = document.getElementById('etaOverlay');
+
+  etaBtn.addEventListener('click', async () => {
+    const latlng = GeoModule.getCurrentLatLng();
+    if (!latlng) {
+      showToast('⚠️ Position inconnue', 'Activez le partage GPS d\'abord', 'warning');
+      return;
+    }
+
+    if (!cachedPlaces.length) {
+      try { cachedPlaces = await API.get('/api/places'); } catch {}
+    }
+
+    const speed = GeoModule.getCurrentSpeed();
+    const effectiveSpeed = speed > 10 ? speed : 30;
+
+    const list = document.getElementById('etaPlaceList');
+    if (!cachedPlaces.length) {
+      list.innerHTML = '<p class="text-muted" style="font-size:.82rem">Aucun lieu favori enregistré. Créez-en depuis la carte (appui long).</p>';
+    } else {
+      list.innerHTML = cachedPlaces.map((p) => {
+        const distKm = haversineKm(latlng[0], latlng[1], p.latitude, p.longitude);
+        const etaMin = Math.round((distKm / effectiveSpeed) * 60);
+        const etaStr = etaMin < 1 ? '< 1 min' : etaMin < 60 ? `${etaMin} min` : `${Math.floor(etaMin/60)}h${etaMin%60 > 0 ? ` ${etaMin%60}min` : ''}`;
+        const icon   = { home:'🏠', work:'💼', school:'🏫', sport:'🏋️', shop:'🛒', star:'⭐' }[p.icon] || '📍';
+        return `
+          <div class="eta-place-row" data-name="${escapeHtml(p.name)}" data-eta="${etaStr}" data-icon="${icon}">
+            <div class="eta-place-info">
+              <span class="eta-place-icon">${icon}</span>
+              <span class="eta-place-name">${p.name}</span>
+            </div>
+            <div class="eta-place-time">
+              <span class="eta-place-duration">${etaStr}</span>
+              <span class="eta-place-dist">${distKm < 1 ? `${Math.round(distKm*1000)} m` : `${distKm.toFixed(1)} km`}</span>
+            </div>
+          </div>`;
+      }).join('');
+
+      list.querySelectorAll('.eta-place-row').forEach((row) => {
+        row.addEventListener('click', async () => {
+          const msg = `${row.dataset.icon} J'arrive dans ~${row.dataset.eta} à ${row.dataset.name}`;
+          await sendEta(msg);
+          overlay.classList.add('hidden');
+        });
+      });
+    }
+
+    // RDV section
+    const rdvList = document.getElementById('etaRdvList');
+    if (rdvList && cachedPlaces.length) {
+      rdvList.innerHTML = cachedPlaces.map((p) => {
+        const icon = { home:'🏠', work:'💼', school:'🏫', sport:'🏋️', shop:'🛒', star:'⭐' }[p.icon] || '📍';
+        const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${p.latitude},${p.longitude}`;
+        return `<button class="btn btn-ghost" style="margin-bottom:.4rem;width:100%;text-align:left" data-rdv-name="${escapeHtml(p.name)}" data-rdv-maps="${mapsUrl}">${icon} ${p.name}</button>`;
+      }).join('');
+
+      rdvList.querySelectorAll('[data-rdv-name]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const msgText = `📍 Rendez-vous à ${btn.dataset.rdvName} ! ${btn.dataset.rdvMaps}`;
+          try {
+            await API.post('/api/chat', { text: msgText });
+            showToast('📍 RDV partagé', btn.dataset.rdvName, 'ok');
+          } catch (err) {
+            showToast('Erreur', err.message);
+          }
+          overlay.classList.add('hidden');
+        });
+      });
+    }
+
+    overlay.classList.remove('hidden');
+  });
+
+  document.getElementById('etaSendCustom').addEventListener('click', async () => {
+    const dest = document.getElementById('etaCustomDest').value.trim();
+    if (!dest) { showToast('⚠️ Entrez une destination', ''); return; }
+    await sendEta(`📍 En route vers ${dest}`);
+    document.getElementById('etaCustomDest').value = '';
+    overlay.classList.add('hidden');
+  });
+
+  document.getElementById('closeEta').addEventListener('click', () => {
+    overlay.classList.add('hidden');
+  });
+}
+
+// ── Feature 12: Classement mensuel ──────────────────────────────────────────
+async function loadMonthRanking() {
+  const container = document.getElementById('rankingContainer');
+  if (!container) return;
+  container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Chargement…</p>';
+
+  try {
+    const rows = await API.get('/api/history/stats/month');
+    if (!rows.length) {
+      container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Aucune donnée ce mois</p>';
+      return;
+    }
+
+    const medals = ['🥇','🥈','🥉'];
+    container.innerHTML = `
+      <div class="week-stats-title">🏆 Classement mensuel — 30 derniers jours</div>
+      ${rows.map((r, i) => {
+        const badges = computeBadges(r, rows);
+        const rank = medals[i] || `${i + 1}.`;
+        return `
+        <div class="ranking-row">
+          <div class="ranking-rank">${rank}</div>
+          <div class="member-avatar" style="width:32px;height:32px;font-size:.78rem;flex-shrink:0;background:${r.color}">${r.name.slice(0,2).toUpperCase()}</div>
+          <div class="ranking-info">
+            <div class="ranking-name" style="color:${r.color}">${r.name}</div>
+            <div class="ranking-stats">${r.distance_km} km · ${r.active_days}j actifs · max ${r.max_speed_kmh} km/h</div>
+            ${badges.length ? `<div class="ranking-badges">${badges.map(b => `<span class="badge-chip">${b}</span>`).join('')}</div>` : ''}
+          </div>
+          <div style="font-weight:800;font-size:1.1rem;color:var(--primary-l);flex-shrink:0">${r.distance_km}<small style="font-size:.65rem;font-weight:400">km</small></div>
+        </div>`;
+      }).join('')}`;
+  } catch (err) {
+    container.innerHTML = `<p class="text-danger">Erreur : ${err.message}</p>`;
+  }
+}
+
+// ── Feature 13: Badges familiaux ────────────────────────────────────────────
+function computeBadges(memberStats, allStats) {
+  const badges = [];
+  const dist = parseFloat(memberStats.distance_km) || 0;
+  const maxSpeed = parseFloat(memberStats.max_speed_kmh) || 0;
+  const driving = parseFloat(memberStats.driving_km) || 0;
+
+  // 🚗 Grand voyageur
+  if (dist > 200) badges.push('🚗 Grand voyageur');
+
+  // 🛡️ Conducteur prudent
+  if (maxSpeed > 0 && maxSpeed < 90) badges.push('🛡️ Conducteur prudent');
+
+  // 🌱 Eco
+  if (dist > 0 && driving < dist * 0.5) badges.push('🌱 Éco');
+
+  // 🏆 Champion (highest distance in family)
+  if (allStats && allStats.length > 1) {
+    const maxDist = Math.max(...allStats.map(r => parseFloat(r.distance_km) || 0));
+    if (dist === maxDist && dist > 0) badges.push('🏆 Champion');
+  }
+
+  return badges;
+}
+
+// ── Feature 14: Comparaison semaine vs semaine ──────────────────────────────
+async function loadWeeklyTrend() {
+  const container = document.getElementById('weekStatsContainer');
+  if (!container) return;
+
+  try {
+    const trends = await API.get('/api/history/stats/weekly-trend?weeks=4');
+    if (!trends.length) return;
+
+    const maxDist = Math.max(...trends.map(r => parseFloat(r.distance_km) || 0), 1);
+
+    const trendHtml = `
+      <div style="font-size:.82rem;font-weight:700;color:var(--text-2);margin:.75rem 0 .4rem">📈 Tendance semaines</div>
+      <div class="trend-chart">
+        ${trends.map(r => {
+          const dist = parseFloat(r.distance_km) || 0;
+          const heightPct = Math.max(5, Math.round((dist / maxDist) * 100));
+          const weekLabel = new Date(r.week_start).toLocaleDateString('fr-FR', { month: '2-digit', day: '2-digit' });
+          return `
+          <div class="trend-bar-wrap">
+            <div class="trend-bar-val">${dist}</div>
+            <div class="trend-bar" style="height:${heightPct}%"></div>
+            <div class="trend-bar-label">${weekLabel}</div>
+          </div>`;
+        }).join('')}
+      </div>`;
+
+    // Append to existing stats container
+    const existing = container.querySelector('.trend-chart-wrap');
+    if (existing) existing.remove();
+    const wrap = document.createElement('div');
+    wrap.className = 'trend-chart-wrap';
+    wrap.innerHTML = trendHtml;
+    container.appendChild(wrap);
+  } catch (err) {
+    console.warn('[weekly-trend]', err.message);
   }
 }
 

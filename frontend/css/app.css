@@ -1003,6 +1003,57 @@ hr[style*="border-color:var(--border)"] { opacity: .6; }
 .routine-time { font-size: .84rem; font-weight: 600; color: var(--text-2); margin-bottom: .2rem; }
 .routine-dist { font-size: .78rem; color: var(--text-muted); }
 
+/* ─── Offline member marker ──────────────────────────────────────────────────── */
+.member-marker.offline { opacity: 0.55; filter: grayscale(70%); }
+.marker-offline-badge { font-size: .6rem; margin-left: .2rem; }
+
+/* ─── Chat reactions ────────────────────────────────────────────────────────── */
+.chat-reactions { display: flex; flex-wrap: wrap; gap: .25rem; margin-top: .3rem; }
+.reaction-chip {
+  background: var(--surface3); border: 1px solid var(--border2); border-radius: 999px;
+  padding: .15rem .5rem; font-size: .78rem; cursor: pointer; transition: all .15s;
+  font-family: var(--font); color: var(--text-2);
+}
+.reaction-chip:hover, .reaction-chip.mine { background: rgba(99,102,241,.15); border-color: var(--primary); }
+
+/* ─── Emoji picker ───────────────────────────────────────────────────────────── */
+.emoji-picker {
+  position: absolute; background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: var(--radius); padding: .4rem; display: flex; gap: .35rem;
+  box-shadow: var(--shadow); z-index: 100; bottom: 100%; left: 0;
+}
+.emoji-picker-btn {
+  font-size: 1.3rem; cursor: pointer; padding: .2rem .3rem;
+  border-radius: 6px; border: none; background: transparent;
+  transition: background .12s;
+}
+.emoji-picker-btn:hover { background: var(--surface3); }
+
+/* ─── Weekly trend chart ─────────────────────────────────────────────────────── */
+.trend-chart { display: flex; align-items: flex-end; gap: .3rem; height: 80px; margin: .75rem 0; }
+.trend-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; gap: .2rem; }
+.trend-bar { width: 100%; border-radius: 4px 4px 0 0; background: var(--primary); min-height: 4px; transition: height .3s; }
+.trend-bar-label { font-size: .62rem; color: var(--text-muted); text-align: center; }
+.trend-bar-val { font-size: .65rem; color: var(--primary-l); font-weight: 700; }
+
+/* ─── Badge chips ────────────────────────────────────────────────────────────── */
+.badge-chip {
+  display: inline-flex; align-items: center; gap: .2rem; padding: .15rem .45rem;
+  background: rgba(99,102,241,.12); border: 1px solid rgba(99,102,241,.25);
+  border-radius: 999px; font-size: .7rem; color: var(--primary-l); font-weight: 600;
+}
+
+/* ─── Ranking list ───────────────────────────────────────────────────────────── */
+.ranking-row {
+  display: flex; align-items: center; gap: .75rem;
+  padding: .6rem 0; border-bottom: 1px solid var(--border);
+}
+.ranking-rank { font-size: 1.3rem; width: 2rem; text-align: center; flex-shrink: 0; }
+.ranking-info { flex: 1; }
+.ranking-name { font-weight: 700; font-size: .9rem; }
+.ranking-stats { font-size: .76rem; color: var(--text-muted); }
+.ranking-badges { display: flex; gap: .2rem; flex-wrap: wrap; margin-top: .2rem; }
+
 /* ─── Responsive ────────────────────────────────────────────────────────────── */
 @media (min-width: 640px) {
   #sidebar { width: 360px; }

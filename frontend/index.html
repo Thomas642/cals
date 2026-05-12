@@ -16,16 +16,27 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
-  <!-- Leaflet (served locally to avoid CDN dependency) -->
+  <!-- Leaflet (vendored for offline/native use) -->
   <link rel="stylesheet" href="/vendor/leaflet.css">
   <script src="/vendor/leaflet.js"></script>
 
-  <!-- Leaflet.heat for heatmap layer -->
-  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+  <!-- Leaflet.heat (vendored for offline/native use) -->
+  <script src="/vendor/leaflet-heat.js"></script>
 
-  <!-- Socket.io — fallback no-op si le script ne charge pas -->
-  <script src="/socket.io/socket.io.js"></script>
-  <script>window.io = window.io || function() { return { on: function(){}, emit: function(){}, disconnect: function(){} }; };</script>
+  <!-- Socket.io: loaded from server in browser, from production URL in Capacitor -->
+  <script>
+    (function () {
+      var src = (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())
+        ? 'https://famille.gameone-val.com/socket.io/socket.io.js'
+        : '/socket.io/socket.io.js';
+      var s = document.createElement('script');
+      s.src = src;
+      s.onerror = function () {
+        window.io = function () { return { on: function(){}, emit: function(){}, disconnect: function(){} }; };
+      };
+      document.head.appendChild(s);
+    })();
+  </script>
 
   <link rel="stylesheet" href="/css/app.css?v=5">
 </head>
@@ -178,6 +189,10 @@
     <div class="panel-title">⏱ Partager mon ETA</div>
     <p class="text-muted" style="font-size:.82rem;margin-bottom:.75rem">Sélectionne une destination pour envoyer ton heure d'arrivée estimée à la famille.</p>
     <div id="etaPlaceList"></div>
+    <hr style="border-color:var(--border);margin:1rem 0">
+    <div style="font-size:.9rem;font-weight:700;color:var(--text-2);margin-bottom:.5rem">📍 Point de rendez-vous</div>
+    <p class="text-muted" style="font-size:.82rem;margin-bottom:.75rem">Partagez un lieu de rencontre avec la famille</p>
+    <div id="etaRdvList"></div>
     <div class="form-group" style="margin-top:.75rem">
       <label>Destination personnalisée</label>
       <input type="text" id="etaCustomDest" placeholder="ex : Chez Mamie">
@@ -203,10 +218,12 @@
       <button class="shortcut-btn" data-shortcut="timeline">📅 Timeline</button>
       <button class="shortcut-btn" data-shortcut="stats">📊 Stats</button>
       <button class="shortcut-btn" data-shortcut="routines">🔄 Routines</button>
+      <button class="shortcut-btn" data-shortcut="ranking">🏆 Classement</button>
     </div>
     <div id="weekStatsContainer" class="hidden"></div>
     <div id="timelineContainer" class="hidden"></div>
     <div id="routinesContainer" class="hidden"></div>
+    <div id="rankingContainer" class="hidden"></div>
     <div style="display:flex;gap:.5rem;margin-bottom:.75rem">
       <div class="form-group" style="flex:1;margin-bottom:0">
         <label>Du</label>
@@ -378,6 +395,42 @@
           <span class="toggle-slider"></span>
         </label>
       </div>
+    </div>
+    <hr style="border-color:var(--border);margin:1rem 0">
+    <div class="panel-title" style="font-size:.95rem">🚶 Mode retour seul(e)</div>
+    <p class="text-muted" style="font-size:.82rem">Arme une minuterie. SOS auto si tu n'arrives pas à destination.</p>
+    <div class="form-group">
+      <label>Destination</label>
+      <select id="safeReturnDest"><option>Aucun lieu sauvegardé</option></select>
+    </div>
+    <div class="form-group">
+      <label>Durée estimée</label>
+      <div class="driving-profile-chips" id="safeReturnChips">
+        <button class="profile-chip active" data-minutes="15">15 min</button>
+        <button class="profile-chip" data-minutes="20">20 min</button>
+        <button class="profile-chip" data-minutes="30">30 min</button>
+        <button class="profile-chip" data-minutes="45">45 min</button>
+      </div>
+    </div>
+    <button class="btn btn-primary btn-full" id="startSafeReturn">🚶 Armer le retour</button>
+    <hr style="border-color:var(--border);margin:1rem 0">
+    <div class="form-group">
+      <div class="sos-passive-row">
+        <div>
+          <div style="font-size:.84rem;font-weight:600;color:var(--text-2)">Check-in régulier</div>
+          <small class="text-muted">La famille est alertée si vous ne confirmez pas votre présence</small>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="checkinToggle">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <select id="checkinInterval" class="hidden" style="margin-top:.5rem">
+        <option value="30">Toutes les 30 min</option>
+        <option value="60" selected>Toutes les heures</option>
+        <option value="120">Toutes les 2h</option>
+        <option value="240">Toutes les 4h</option>
+      </select>
     </div>
     <hr style="border-color:var(--border);margin:1rem 0">
     <div class="panel-title" style="font-size:.95rem">🔗 Partage temporaire</div>
