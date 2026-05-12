@@ -1,75 +1,108 @@
 // ── Service Worker — Family Tracker ─────────────────────────────────────────
-const CACHE_NAME = 'family-tracker-v5';
+// Versioned cache (bump on each frontend release that touches assets).
+const VERSION    = 'v10';
+const CACHE_NAME = `family-tracker-${VERSION}`;
 
-const STATIC_ASSETS = [
+// Static shell assets. Versioned URL query strings (?v=...) are NOT included
+// here: we cache them by full URL when first requested, the SW just makes
+// sure stale versions are evicted.
+const PRECACHE_URLS = [
   '/',
+  '/index.html',
   '/login.html',
   '/manifest.json',
   '/css/app.css',
-  '/js/api.js',
-  '/js/auth.js',
-  '/js/map.js',
-  '/js/geolocation.js',
-  '/js/notifications.js',
-  '/js/app.js',
-  '/vendor/leaflet.css',
-  '/vendor/leaflet.js',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
+  '/vendor/leaflet.css',
+  '/vendor/leaflet.js',
 ];
 
-// ── Install: cache static assets ─────────────────────────────────────────────
+// ── Install: precache the shell ──────────────────────────────────────────────
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS).catch(() => {}))
   );
   self.skipWaiting();
 });
 
-// ── Activate: clean old caches ────────────────────────────────────────────────
+// ── Activate: clean old caches, become controller for open tabs ──────────────
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    )
+    ).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// ── Fetch: network-first for API, cache-first for static ─────────────────────
+// ── Fetch strategies ─────────────────────────────────────────────────────────
 self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
+  const req = event.request;
+  if (req.method !== 'GET') return;
 
-  // Never cache API, socket.io, or JS files (always fetch fresh)
-  if (
-    url.pathname.startsWith('/api/') ||
-    url.pathname.startsWith('/socket.io/') ||
-    url.pathname.startsWith('/js/')
-  ) {
-    return event.respondWith(fetch(event.request).catch(() => new Response('', { status: 503 })));
+  const url = new URL(req.url);
+
+  // 1) Never intercept API / WebSocket / push / external origins
+  if (url.origin !== location.origin) return;
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/socket.io/')) return;
+
+  // 2) Versioned static assets (JS/CSS with ?v= query) — stale-while-revalidate
+  //    Cache key includes the version, so old versions evict naturally.
+  if (/\.(js|css)$/.test(url.pathname) && url.search) {
+    event.respondWith(staleWhileRevalidate(req));
+    return;
   }
 
-  // Cache-first for static
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((response) => {
-        if (response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((c) => c.put(event.request, clone));
-        }
-        return response;
-      }).catch(() => {
-        // Offline fallback for navigation
-        if (event.request.mode === 'navigate') {
-          return caches.match('/');
-        }
-      });
-    })
-  );
+  // 3) HTML navigation — network-first so we always get the latest shell
+  if (req.mode === 'navigate' || req.destination === 'document') {
+    event.respondWith(networkFirst(req));
+    return;
+  }
+
+  // 4) Static images/fonts/manifest — cache-first
+  event.respondWith(cacheFirst(req));
 });
 
-// ── Push notifications ────────────────────────────────────────────────────────
+async function cacheFirst(req) {
+  const cached = await caches.match(req);
+  if (cached) return cached;
+  try {
+    const res = await fetch(req);
+    if (res.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(req, res.clone());
+    }
+    return res;
+  } catch {
+    return Response.error();
+  }
+}
+
+async function networkFirst(req) {
+  try {
+    const res = await fetch(req);
+    if (res.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(req, res.clone());
+    }
+    return res;
+  } catch {
+    const cached = await caches.match(req);
+    return cached || caches.match('/');
+  }
+}
+
+async function staleWhileRevalidate(req) {
+  const cache  = await caches.open(CACHE_NAME);
+  const cached = await cache.match(req);
+  const fetchPromise = fetch(req).then((res) => {
+    if (res.ok) cache.put(req, res.clone());
+    return res;
+  }).catch(() => cached);
+  return cached || fetchPromise;
+}
+
+// ── Push notifications ───────────────────────────────────────────────────────
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data?.json() || {}; } catch {}
@@ -89,30 +122,22 @@ self.addEventListener('push', (event) => {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
-// ── Notification click ────────────────────────────────────────────────────────
+// ── Notification click ───────────────────────────────────────────────────────
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
-      if (list.length) {
-        return list[0].focus();
-      }
+      if (list.length) return list[0].focus();
       return clients.openWindow('/');
     })
   );
 });
 
-// ── Background sync (position sending when back online) ──────────────────────
+// ── Background sync ──────────────────────────────────────────────────────────
 self.addEventListener('sync', (event) => {
   if (event.tag === 'sync-positions') {
-    event.waitUntil(syncPendingPositions());
+    event.waitUntil(
+      self.clients.matchAll().then((cs) => cs.forEach((c) => c.postMessage({ type: 'sync-positions' })))
+    );
   }
 });
-
-async function syncPendingPositions() {
-  // Positions are sent directly by the main thread; this is a placeholder
-  // for when the app comes back online after being offline.
-  const clients_ = await clients.matchAll();
-  clients_.forEach((c) => c.postMessage({ type: 'sync-positions' }));
-}
