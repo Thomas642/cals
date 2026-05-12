@@ -93,6 +93,19 @@ else
   echo "    Permissions already present."
 fi
 
+# ── 5.5. Bump versionCode / versionName so in-app update check fires ───────
+#   versionCode = monotonically increasing integer (epoch minutes since 1970)
+#   versionName = human-readable date-based version
+VERSION="${VERSION:-$(date +%Y.%m.%d-%H%M)}"
+VERSION_CODE=$(( $(date +%s) / 60 ))
+GRADLE_FILE="android/app/build.gradle"
+if [ -f "$GRADLE_FILE" ]; then
+    sed -i.bak -E "s/versionCode [0-9]+/versionCode $VERSION_CODE/" "$GRADLE_FILE"
+    sed -i.bak -E "s/versionName \"[^\"]*\"/versionName \"$VERSION\"/" "$GRADLE_FILE"
+    rm -f "$GRADLE_FILE.bak"
+    echo "    Set versionName=$VERSION  versionCode=$VERSION_CODE"
+fi
+
 # ── 6. Gradle build ─────────────────────────────────────────────────────────
 echo "[6/6] Building debug APK with Gradle (this may take a few minutes)..."
 cd android
@@ -108,9 +121,6 @@ cp "$APK_SRC" "$APK_DEST"
 DOWNLOAD_DIR="$REPO_ROOT/frontend/download"
 mkdir -p "$DOWNLOAD_DIR"
 cp "$APK_SRC" "$DOWNLOAD_DIR/FamilyTracker.apk"
-
-# Update version.json
-VERSION="${VERSION:-$(date +%Y.%m.%d-%H%M)}"
 cat > "$DOWNLOAD_DIR/version.json" <<EOF
 {
   "version": "$VERSION",

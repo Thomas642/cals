@@ -263,6 +263,43 @@ html, body {
 }
 .nav-recenter:hover { background: rgba(59,130,246,.15); }
 
+/* In-app APK update banner */
+.update-banner {
+  position: fixed; left: 50%; bottom: 86px;
+  transform: translateX(-50%);
+  width: calc(100% - 1.6rem); max-width: 460px;
+  background: linear-gradient(135deg, #6366f1, #a855f7);
+  border-radius: 12px;
+  padding: .7rem .8rem;
+  display: flex; align-items: center; gap: .65rem;
+  z-index: 1700;
+  box-shadow: 0 8px 24px rgba(99,102,241,.4);
+  color: #fff;
+}
+.update-banner-icon {
+  font-size: 1.4rem; flex-shrink: 0;
+  width: 38px; height: 38px;
+  background: rgba(255,255,255,.18);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+}
+.update-banner-body { flex: 1; min-width: 0; font-size: .82rem; line-height: 1.25; }
+.update-banner-meta { font-size: .72rem; opacity: .85; margin-top: .1rem; }
+.update-banner-btn {
+  background: #fff; color: #6366f1;
+  border: 0; border-radius: 8px;
+  font-family: inherit; font-weight: 700; font-size: .78rem;
+  padding: .4rem .75rem; cursor: pointer;
+  flex-shrink: 0;
+}
+.update-banner-btn:hover { background: #f8fafc; }
+.update-banner-close {
+  background: transparent; border: 0; color: rgba(255,255,255,.7);
+  cursor: pointer; padding: .3rem .4rem;
+  font-size: 1rem; flex-shrink: 0;
+}
+.update-banner-close:hover { color: #fff; }
+
 /* Hide button text labels on narrow screens — keep icons only */
 @media (max-width: 639px) {
   .topbar-actions .btn-label { display: none; }
