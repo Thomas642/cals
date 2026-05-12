@@ -35,6 +35,14 @@
     <p class="auth-switch">Pas encore de compte ? <a href="#" id="showRegister">Inscription par invitation</a></p>
   </form>
 
+  <!-- Download app banner (hidden on native APK) -->
+  <div id="downloadBanner" style="margin-top:1.2rem;text-align:center">
+    <a href="/download.html" style="display:inline-flex;align-items:center;gap:.45rem;font-size:.82rem;color:var(--primary-l,#60a5fa);text-decoration:none;opacity:.85">
+      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zm7-18L5.33 8h3.84v5h5.66V8h3.84L12 2z"/></svg>
+      Télécharger l'application Android
+    </a>
+  </div>
+
   <!-- Register form -->
   <form id="registerForm" class="auth-form hidden">
     <h2>Inscription</h2>
@@ -64,6 +72,10 @@
   const _IS_NATIVE = !!(window.Capacitor?.isNativePlatform?.());
   const _API_BASE   = _IS_NATIVE ? 'https://famille.gameone-val.com' : '';
   const _HOME       = _IS_NATIVE ? '/index.html' : '/';
+  if (_IS_NATIVE) {
+    const b = document.getElementById('downloadBanner');
+    if (b) b.style.display = 'none';
+  }
 
   // Guest auto-login: ?auto_token=JWT → store and redirect immediately
   const autoToken = new URLSearchParams(location.search).get('auto_token');

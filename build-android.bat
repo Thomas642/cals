@@ -94,14 +94,18 @@ copy /Y "android\app\build\outputs\apk\debug\app-debug.apk" "FamilyTracker.apk"
 
 echo.
 echo ══════════════════════════════════════════════════
-echo   BUILD SUCCESSFUL
-echo   APK: %CD%\FamilyTracker.apk
-echo.
-echo   To install on your phone:
-echo   1. Enable "Install from unknown sources" in
-echo      Android Settings → Security (or Special app access)
-echo   2. Copy FamilyTracker.apk to your phone via USB or Google Drive
-echo   3. Open it from the file manager and tap Install
+echo   BUILD RÉUSSI
+echo   APK : %CD%\FamilyTracker.apk
 echo ══════════════════════════════════════════════════
 echo.
-pause
+
+:: Propose d'envoyer directement sur le serveur
+set /p DEPLOY="Déployer maintenant sur famille.gameone-val.com ? (O/N) : "
+if /i "%DEPLOY%"=="O" (
+  call scripts\deploy-apk.bat
+) else (
+  echo.
+  echo Pour déployer plus tard, lance scripts\deploy-apk.bat
+  echo.
+  pause
+)
