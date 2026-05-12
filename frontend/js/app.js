@@ -348,14 +348,17 @@ function setupSOS() {
 
   const startHold = () => {
     btn.classList.add('holding');
+    Visual.tap();   // light tap when the hold starts
     holdTimer = setTimeout(async () => {
       btn.classList.remove('holding');
+      Visual.sos(); // heavy vibration when SOS actually fires
       const latlng = GeoModule.getCurrentLatLng();
       try {
         const body = latlng ? { latitude: latlng[0], longitude: latlng[1] } : {};
         await API.post('/api/notify/sos', body);
         showToast('🆘 SOS envoyé', 'Tous les membres ont été alertés', 'sos');
       } catch (err) {
+        Visual.error();
         showToast('Erreur SOS', err.message);
       }
     }, 3000);
@@ -395,13 +398,16 @@ function setupOkButton() {
 
   btn.addEventListener('click', async () => {
     if (cooldown) { showToast('⏳ Patientez', 'Signal déjà envoyé récemment'); return; }
+    Visual.tap();
     try {
       await API.post('/api/notify/ok', {});
+      Visual.success();
       showToast('✅ Signal envoyé', 'La famille a été notifiée', 'ok');
       btn.classList.add('sent');
       cooldown = true;
       setTimeout(() => { cooldown = false; btn.classList.remove('sent'); }, 30_000);
     } catch (err) {
+      Visual.error();
       showToast('Erreur', err.message);
     }
   });
@@ -1226,7 +1232,12 @@ function setupZones() {
 function renderZoneList() {
   const container = document.getElementById('zoneList');
   if (!zones.length) {
-    container.innerHTML = '<p class="text-muted">Aucune zone définie.</p>';
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">🚧</div>
+        <div class="empty-state-title">Aucune zone définie</div>
+        <div class="empty-state-body">Créez une zone (Maison, Travail…) en cliquant sur la carte ou en tapant une adresse ci-dessous.</div>
+      </div>`;
     return;
   }
   container.innerHTML = zones.map((z) => {
@@ -1381,7 +1392,15 @@ async function loadAudit() {
   const body = document.getElementById('auditBody');
   try {
     const events = await API.get('/api/admin/audit?limit=100');
-    if (!events.length) { body.innerHTML = '<p class="text-muted">Aucun événement.</p>'; return; }
+    if (!events.length) {
+      body.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">📜</div>
+          <div class="empty-state-title">Pas d'événement d'audit</div>
+          <div class="empty-state-body">Les actions admin (invitations, suppressions, changements de limites) s'afficheront ici.</div>
+        </div>`;
+      return;
+    }
     body.innerHTML = `
       <div style="max-height:55vh;overflow-y:auto">
       ${events.map((e) => `
@@ -1443,7 +1462,12 @@ function escapeHtml(s) {
 
 async function renderAdminPanel() {
   const container = document.getElementById('adminContent');
-  container.innerHTML = '<p class="text-muted" style="text-align:center;padding:1.5rem">Chargement…</p>';
+  // Skeleton placeholders while the admin data loads in parallel
+  container.innerHTML = `
+    <div class="skeleton skeleton-line" style="width:30%"></div>
+    <div class="skeleton-row"><div class="skeleton skeleton-avatar"></div><div class="skeleton-body"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div></div></div>
+    <div class="skeleton-row"><div class="skeleton skeleton-avatar"></div><div class="skeleton-body"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div></div></div>
+    <div class="skeleton-row"><div class="skeleton skeleton-avatar"></div><div class="skeleton-body"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div></div></div>`;
 
   try {
     const [stats, members, invitations, sosHistory, msgHistory, monthStats] = await Promise.all([

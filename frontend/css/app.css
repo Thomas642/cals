@@ -315,6 +315,66 @@ html, body {
 }
 .health-card .text-muted { font-size: .72rem; }
 
+/* ─── Skeleton loaders (shimmer placeholder while data is loading) ─────────── */
+@keyframes ft-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg,
+    var(--surface2, #1a2340) 0%,
+    rgba(99,102,241,.18) 50%,
+    var(--surface2, #1a2340) 100%);
+  background-size: 200% 100%;
+  animation: ft-shimmer 1.4s infinite linear;
+  border-radius: 8px;
+  display: inline-block;
+}
+.skeleton-line   { height: .85rem; width: 100%; margin: .35rem 0; border-radius: 4px; }
+.skeleton-line.short { width: 60%; }
+.skeleton-row    {
+  display: flex; align-items: center; gap: .75rem;
+  padding: .6rem .8rem; border-bottom: 1px solid var(--border);
+}
+.skeleton-avatar { width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0; }
+.skeleton-body   { flex: 1; min-width: 0; }
+
+/* ─── Empty states (no data) ──────────────────────────────────────────────── */
+.empty-state {
+  text-align: center; padding: 2rem 1rem;
+  color: var(--text-muted);
+}
+.empty-state-icon {
+  font-size: 2.5rem;
+  margin-bottom: .5rem;
+  opacity: .5;
+}
+.empty-state-title {
+  font-size: .95rem; font-weight: 600;
+  color: var(--text);
+  margin-bottom: .25rem;
+}
+.empty-state-body {
+  font-size: .8rem;
+  line-height: 1.5;
+  max-width: 280px;
+  margin: 0 auto .9rem;
+}
+.empty-state .btn { display: inline-flex; }
+
+/* ─── Toast stack (multiple toasts no longer overlap) ─────────────────────── */
+#toastContainer {
+  position: fixed; top: 70px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: .4rem;
+  pointer-events: none; z-index: 2000;
+  width: calc(100% - 1.6rem); max-width: 420px;
+}
+
+/* Tap feedback for native-feel on mobile */
+button:active { transform: scale(.97); }
+.btn:active   { transform: scale(.97); }
+
 /* Hide button text labels on narrow screens — keep icons only */
 @media (max-width: 639px) {
   .topbar-actions .btn-label { display: none; }
