@@ -431,12 +431,14 @@ function setupPlaces() {
   document.getElementById('savePlace').addEventListener('click', async () => {
     const name = document.getElementById('placeName').value.trim();
     if (!name) { showToast('⚠️ Entrez un nom', ''); return; }
+    const notes = (document.getElementById('placeNotes')?.value || '').trim();
     try {
       const place = await API.post('/api/places', {
         name,
         icon: selectedIcon,
         latitude: pendingPlaceLat,
         longitude: pendingPlaceLng,
+        notes,
       });
       MapModule.addPlace(place);
       overlay.classList.add('hidden');
@@ -455,6 +457,19 @@ function setupPlaces() {
       await API.delete(`/api/places/${id}`);
       MapModule.removePlace(id);
       showToast('Lieu supprimé', '');
+    } catch (err) {
+      showToast('Erreur', err.message);
+    }
+  };
+
+  window._editPlaceNotesCallback = async (id, name) => {
+    const notes = prompt(`Notes pour « ${name } » :`, '');
+    if (notes === null) return;
+    try {
+      const updated = await API.patch(`/api/places/${id}`, { notes });
+      MapModule.removePlace(id);
+      MapModule.addPlace(updated);
+      showToast(`📝 Notes mises à jour`, '');
     } catch (err) {
       showToast('Erreur', err.message);
     }
@@ -479,6 +494,7 @@ function setupProfile() {
     }
 
     overlay.classList.remove('hidden');
+    loadShareLinks();
   });
 
   document.getElementById('closeProfile').addEventListener('click', () => {
@@ -539,6 +555,39 @@ function setupProfile() {
     });
   });
 
+  // Driving profile chips
+  const savedProfile = localStorage.getItem('ft_driving_profile') || 'car';
+  document.querySelectorAll('.profile-chip').forEach((chip) => {
+    if (chip.dataset.profile === savedProfile) chip.classList.add('active');
+    else chip.classList.remove('active');
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.profile-chip').forEach((c) => c.classList.remove('active'));
+      chip.classList.add('active');
+      const interval = parseInt(chip.dataset.interval);
+      document.getElementById('gpsInterval').value = interval;
+      localStorage.setItem('ft_driving_profile', chip.dataset.profile);
+      localStorage.setItem('ft_interval', interval);
+      GeoModule.setInterval(interval);
+      showToast(`${chip.textContent.trim()} activé`, `GPS toutes les ${interval}s`);
+    });
+  });
+
+  // SOS passif toggle
+  const sosPassiveToggle = document.getElementById('sosPassiveToggle');
+  sosPassiveToggle.checked = localStorage.getItem('ft_sos_passive') === '1';
+  updateSosPassiveStatus();
+  sosPassiveToggle.addEventListener('change', () => {
+    if (sosPassiveToggle.checked) {
+      startSosPassive();
+    } else {
+      stopSosPassive();
+    }
+    updateSosPassiveStatus();
+  });
+
+  // Share links
+  document.getElementById('createShareLink').addEventListener('click', createShareLink);
+
   document.getElementById('testPush').addEventListener('click', async () => {
     try {
       await PushModule.subscribe();
@@ -588,7 +637,13 @@ function setupHistory() {
         const w = new Date(today); w.setDate(w.getDate() - 6);
         document.getElementById('historyFrom').value = fmt(w);
         document.getElementById('historyTo').value   = fmt(today);
+      } else if (btn.dataset.shortcut === 'stats') {
+        document.getElementById('weekStatsContainer').classList.remove('hidden');
+        document.getElementById('tripList').innerHTML = '';
+        await loadWeekStats();
+        return;
       }
+      document.getElementById('weekStatsContainer').classList.add('hidden');
       await doLoadHistory();
     });
   });
@@ -608,6 +663,7 @@ async function doLoadHistory() {
   const to     = document.getElementById('historyTo').value;
   if (!userId) return;
 
+  document.getElementById('weekStatsContainer')?.classList.add('hidden');
   const container = document.getElementById('tripList');
   container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Chargement…</p>';
 
@@ -668,12 +724,14 @@ function renderTripList(trips, userId) {
       const e = new Date(t.ended_at).toLocaleTimeString('fr-FR',   { hour: '2-digit', minute: '2-digit' });
       const dur = formatDuration(t.started_at, t.ended_at);
       const maxSpd = t.max_speed_kmh || t.avg_speed_kmh || 0;
-      const isMoving = t.distance_km > 0.1;
       return `
         <div class="trip-card" data-index="${i}">
           <div class="trip-header">
             <span class="trip-time">${s} → ${e}</span>
-            <span class="trip-distance">${t.distance_km < 0.1 ? '< 0.1' : t.distance_km} km</span>
+            <div style="display:flex;align-items:center;gap:.4rem">
+              <span class="trip-distance">${t.distance_km < 0.1 ? '< 0.1' : t.distance_km} km</span>
+              <button class="btn-gpx" data-index="${i}" title="Exporter GPX">⬇️ GPX</button>
+            </div>
           </div>
           <div class="trip-meta">
             <span>⏱ ${dur}</span>
@@ -683,6 +741,14 @@ function renderTripList(trips, userId) {
           </div>
         </div>`;
     }).join('')}`;
+
+  container.querySelectorAll('.btn-gpx').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const trip = trips[parseInt(btn.dataset.index)];
+      exportGpx(trip);
+    });
+  });
 
   container.querySelectorAll('.trip-card').forEach((card) => {
     let holdTimer = null;
@@ -1030,6 +1096,23 @@ function setActiveNav(id) {
 }
 
 function setupNavigation() {
+  // Map theme toggle
+  const btnTheme = document.getElementById('btnMapTheme');
+  if (btnTheme) {
+    const updateThemeBtn = (theme) => {
+      const moonPath = 'M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z';
+      const sunPath  = 'M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2v-2H2v2zm18 0h2v-2h-2v2zM11 2v2h2V2h-2zm0 18v2h2v-2h-2zM5.99 4.58l-1.41 1.41 1.41 1.41 1.41-1.41-1.41-1.41zm12.02 12.02l-1.41 1.41 1.41 1.41 1.41-1.41-1.41-1.41zM18 6l-1.41-1.41-1.41 1.41 1.41 1.41L18 6zM7.42 18.02L5.99 19.44l1.41 1.41 1.41-1.41-1.39-1.42z';
+      btnTheme.querySelector('svg path').setAttribute('d', theme === 'dark' ? moonPath : sunPath);
+      btnTheme.title = theme === 'dark' ? 'Passer en carte claire' : 'Passer en carte sombre';
+    };
+    updateThemeBtn(MapModule.getTheme());
+    btnTheme.addEventListener('click', () => {
+      const next = MapModule.getTheme() === 'dark' ? 'light' : 'dark';
+      MapModule.setTheme(next);
+      updateThemeBtn(next);
+    });
+  }
+
   document.getElementById('navMap').addEventListener('click', () => {
     document.getElementById('sidebar').classList.remove('open');
     try { MapModule.clearTrip(); } catch {}
@@ -1297,4 +1380,184 @@ function setupDrivingMode() {
       showToast('🚗 Mode conduite activé', 'GPS toutes les 10 s · Écran maintenu allumé', 'ok');
     }
   });
+}
+
+// ── GPX Export ────────────────────────────────────────────────────────────────
+function exportGpx(trip) {
+  const fmt = (d) => new Date(d).toISOString();
+  const trkpts = trip.points.map((p) =>
+    `    <trkpt lat="${p.latitude}" lon="${p.longitude}">
+      <time>${fmt(p.recorded_at)}</time>${p.speed ? `\n      <speed>${(p.speed / 3.6).toFixed(2)}</speed>` : ''}
+    </trkpt>`
+  ).join('\n');
+
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="FamilyTracker" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><time>${fmt(trip.started_at)}</time></metadata>
+  <trk>
+    <name>Trajet ${new Date(trip.started_at).toLocaleDateString('fr-FR')}</name>
+    <trkseg>
+${trkpts}
+    </trkseg>
+  </trk>
+</gpx>`;
+
+  const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `trajet_${new Date(trip.started_at).toISOString().slice(0,10)}.gpx`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('⬇️ GPX exporté', `${trip.point_count} points · ${trip.distance_km} km`);
+}
+
+// ── Weekly stats ──────────────────────────────────────────────────────────────
+async function loadWeekStats() {
+  const container = document.getElementById('weekStatsContainer');
+  container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Chargement…</p>';
+  try {
+    const rows = await API.get('/api/history/stats/week');
+    if (!rows.length) {
+      container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Aucune donnée cette semaine</p>';
+      return;
+    }
+    const maxDist = Math.max(...rows.map((r) => parseFloat(r.distance_km)));
+    container.innerHTML = `
+      <div class="week-stats-title">📊 Résumé — 7 derniers jours</div>
+      ${rows.map((r) => {
+        const pct = maxDist > 0 ? (parseFloat(r.distance_km) / maxDist * 100).toFixed(0) : 0;
+        return `
+        <div class="week-stat-row">
+          <div class="week-stat-name" style="color:${r.color}">${r.name}</div>
+          <div class="week-stat-bar-wrap">
+            <div class="week-stat-bar" style="width:${pct}%;background:${r.color}"></div>
+          </div>
+          <div class="week-stat-vals">
+            <span class="week-stat-km">${r.distance_km} km</span>
+            <span class="week-stat-meta">${r.active_days}j · ${r.avg_speed_kmh} km/h moy.</span>
+          </div>
+        </div>`;
+      }).join('')}`;
+  } catch (err) {
+    container.innerHTML = `<p class="text-danger">Erreur : ${err.message}</p>`;
+  }
+}
+
+// ── SOS Passif (orientation) ──────────────────────────────────────────────────
+let _sosPassiveActive  = false;
+let _sosPassiveTimer   = null;
+let _sosPassiveSent    = false;
+
+function updateSosPassiveStatus() {
+  const el = document.getElementById('sosPassiveStatus');
+  if (!el) return;
+  const on = document.getElementById('sosPassiveToggle')?.checked;
+  el.classList.toggle('hidden', !on);
+}
+
+function startSosPassive() {
+  if (_sosPassiveActive) return;
+  if (!window.DeviceOrientationEvent) {
+    showToast('⚠️ Non supporté', 'Capteur d\'orientation non disponible', 'warning');
+    document.getElementById('sosPassiveToggle').checked = false;
+    return;
+  }
+  const doStart = () => {
+    _sosPassiveActive = true;
+    _sosPassiveSent   = false;
+    localStorage.setItem('ft_sos_passive', '1');
+    window.addEventListener('deviceorientation', _sosOrientationHandler);
+    showToast('🔒 SOS passif activé', 'Retournez le téléphone 10s pour alerter', 'ok');
+  };
+
+  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+    DeviceOrientationEvent.requestPermission().then((perm) => {
+      if (perm === 'granted') doStart();
+      else {
+        showToast('⚠️ Permission refusée', 'Autorisation capteur requise', 'warning');
+        document.getElementById('sosPassiveToggle').checked = false;
+      }
+    }).catch(() => {
+      document.getElementById('sosPassiveToggle').checked = false;
+    });
+  } else {
+    doStart();
+  }
+}
+
+function stopSosPassive() {
+  _sosPassiveActive = false;
+  localStorage.setItem('ft_sos_passive', '0');
+  window.removeEventListener('deviceorientation', _sosOrientationHandler);
+  if (_sosPassiveTimer) { clearTimeout(_sosPassiveTimer); _sosPassiveTimer = null; }
+}
+
+function _sosOrientationHandler(e) {
+  const beta = e.beta; // -180 to 180; face-down ≈ ±180
+  const faceDown = beta !== null && Math.abs(beta) > 155;
+  if (faceDown && !_sosPassiveTimer && !_sosPassiveSent) {
+    _sosPassiveTimer = setTimeout(async () => {
+      _sosPassiveSent = true;
+      _sosPassiveTimer = null;
+      try {
+        await API.post('/api/notify/sos', {});
+        showToast('🆘 SOS passif envoyé', 'Votre famille a été alertée en silence', 'warning');
+      } catch {}
+    }, 10_000);
+  } else if (!faceDown && _sosPassiveTimer) {
+    clearTimeout(_sosPassiveTimer);
+    _sosPassiveTimer = null;
+  }
+  if (!faceDown) _sosPassiveSent = false;
+}
+
+// Restore SOS passive on startup
+if (localStorage.getItem('ft_sos_passive') === '1') {
+  startSosPassive();
+}
+
+// ── Share Links ───────────────────────────────────────────────────────────────
+async function loadShareLinks() {
+  const container = document.getElementById('shareLinksContainer');
+  if (!container) return;
+  try {
+    const links = await API.get('/api/share');
+    if (!links.length) { container.innerHTML = ''; return; }
+    container.innerHTML = links.map((l) => {
+      const url     = `${location.origin}/share.html?t=${l.token}`;
+      const expires = new Date(l.expires_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      return `
+        <div class="share-link-row">
+          <div style="flex:1;min-width:0">
+            <div class="share-link-label">${escapeHtml(l.label || 'Lien sans titre')}</div>
+            <div class="share-link-url" title="${url}">${url}</div>
+            <div style="font-size:.72rem;color:var(--text-muted)">Expire aujourd'hui à ${expires}</div>
+          </div>
+          <div style="display:flex;gap:.4rem;flex-shrink:0">
+            <button class="btn btn-ghost btn-sm" onclick="navigator.clipboard.writeText('${url}');showToast('✅ Copié','')">Copier</button>
+            <button class="btn btn-danger btn-sm" data-revoke="${l.token}">✕</button>
+          </div>
+        </div>`;
+    }).join('');
+    container.querySelectorAll('[data-revoke]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        try {
+          await API.delete(`/api/share/${btn.dataset.revoke}`);
+          await loadShareLinks();
+          showToast('Lien révoqué', '');
+        } catch (err) { showToast('Erreur', err.message); }
+      });
+    });
+  } catch { container.innerHTML = ''; }
+}
+
+async function createShareLink() {
+  const label = document.getElementById('shareLabel').value.trim();
+  try {
+    await API.post('/api/share', { label });
+    document.getElementById('shareLabel').value = '';
+    showToast('🔗 Lien créé', 'Partageable 24h — visible dans votre profil', 'ok');
+    await loadShareLinks();
+  } catch (err) { showToast('Erreur', err.message); }
 }

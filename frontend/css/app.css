@@ -828,6 +828,71 @@ hr[style*="border-color:var(--border)"] { opacity: .6; }
   color: #fff;
 }
 
+/* ─── Driving profile chips ─────────────────────────────────────────────────── */
+.driving-profile-chips { display: flex; gap: .4rem; flex-wrap: wrap; }
+.profile-chip {
+  flex: 1; min-width: 0; padding: .45rem .5rem; border-radius: 10px;
+  background: var(--surface2); border: 1.5px solid var(--border);
+  color: var(--text-2); font-family: var(--font); font-size: .78rem; font-weight: 600;
+  cursor: pointer; transition: all .15s; text-align: center; white-space: nowrap;
+}
+.profile-chip:hover { background: var(--surface3); border-color: var(--border2); }
+.profile-chip.active {
+  border-color: var(--primary); background: rgba(99,102,241,.15);
+  color: var(--primary-l); box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+/* ─── Toggle switch (SOS passif) ────────────────────────────────────────────── */
+.sos-passive-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.toggle-switch { position: relative; width: 44px; height: 26px; flex-shrink: 0; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.toggle-slider {
+  position: absolute; inset: 0; border-radius: 13px; background: var(--surface3);
+  border: 1.5px solid var(--border); cursor: pointer; transition: background .2s;
+}
+.toggle-slider::before {
+  content: ''; position: absolute; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--text-muted); top: 3px; left: 3px; transition: transform .2s, background .2s;
+}
+.toggle-switch input:checked + .toggle-slider { background: rgba(99,102,241,.25); border-color: var(--primary); }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); background: var(--primary-l); }
+
+/* ─── Share links ───────────────────────────────────────────────────────────── */
+.share-link-row {
+  display: flex; align-items: flex-start; gap: .6rem; padding: .65rem .75rem;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius); margin-bottom: .4rem;
+}
+.share-link-label { font-size: .82rem; font-weight: 600; color: var(--text); margin-bottom: .15rem; }
+.share-link-url {
+  font-size: .7rem; color: var(--primary-l); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+
+/* ─── GPX export button ─────────────────────────────────────────────────────── */
+.btn-gpx {
+  padding: .2rem .45rem; border-radius: 6px; font-size: .68rem; font-weight: 700;
+  background: rgba(99,102,241,.15); color: var(--primary-l);
+  border: 1px solid rgba(99,102,241,.3); cursor: pointer; font-family: var(--font);
+  transition: all .15s; white-space: nowrap;
+}
+.btn-gpx:hover { background: rgba(99,102,241,.3); }
+
+/* ─── Weekly stats ──────────────────────────────────────────────────────────── */
+.week-stats-title {
+  font-size: .8rem; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .07em; margin-bottom: .75rem;
+}
+.week-stat-row { margin-bottom: .9rem; }
+.week-stat-name { font-size: .86rem; font-weight: 700; margin-bottom: .3rem; }
+.week-stat-bar-wrap {
+  height: 6px; background: var(--surface3); border-radius: 3px; overflow: hidden; margin-bottom: .25rem;
+}
+.week-stat-bar { height: 100%; border-radius: 3px; transition: width .4s ease; min-width: 4px; }
+.week-stat-vals { display: flex; justify-content: space-between; align-items: baseline; }
+.week-stat-km { font-size: .92rem; font-weight: 800; color: var(--primary-l); }
+.week-stat-meta { font-size: .72rem; color: var(--text-muted); }
+
 /* ─── Responsive ────────────────────────────────────────────────────────────── */
 @media (min-width: 640px) {
   #sidebar { width: 360px; }
