@@ -1312,7 +1312,7 @@ function setupAdmin() {
   // to the real handler that admin.js has just registered.
   const onFirstClick = async () => {
     try {
-      await loadScript('/js/admin.js?v=16');
+      await loadScript('/js/admin.js?v=17');
       // admin.js declares `function setupAdmin()` which overrides this one
       // in the global scope. Call it to wire the real click handler.
       setupAdmin();
