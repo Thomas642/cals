@@ -16,16 +16,27 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
-  <!-- Leaflet (served locally to avoid CDN dependency) -->
+  <!-- Leaflet (vendored for offline/native use) -->
   <link rel="stylesheet" href="/vendor/leaflet.css">
   <script src="/vendor/leaflet.js"></script>
 
-  <!-- Leaflet.heat for heatmap layer -->
-  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+  <!-- Leaflet.heat (vendored for offline/native use) -->
+  <script src="/vendor/leaflet-heat.js"></script>
 
-  <!-- Socket.io — fallback no-op si le script ne charge pas -->
-  <script src="/socket.io/socket.io.js"></script>
-  <script>window.io = window.io || function() { return { on: function(){}, emit: function(){}, disconnect: function(){} }; };</script>
+  <!-- Socket.io: loaded from server in browser, from production URL in Capacitor -->
+  <script>
+    (function () {
+      var src = (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())
+        ? 'https://famille.gameone-val.com/socket.io/socket.io.js'
+        : '/socket.io/socket.io.js';
+      var s = document.createElement('script');
+      s.src = src;
+      s.onerror = function () {
+        window.io = function () { return { on: function(){}, emit: function(){}, disconnect: function(){} }; };
+      };
+      document.head.appendChild(s);
+    })();
+  </script>
 
   <link rel="stylesheet" href="/css/app.css?v=5">
 </head>

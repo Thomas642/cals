@@ -61,11 +61,15 @@
 </div>
 
 <script>
+  const _IS_NATIVE = !!(window.Capacitor?.isNativePlatform?.());
+  const _API_BASE   = _IS_NATIVE ? 'https://famille.gameone-val.com' : '';
+  const _HOME       = _IS_NATIVE ? '/index.html' : '/';
+
   // Guest auto-login: ?auto_token=JWT → store and redirect immediately
   const autoToken = new URLSearchParams(location.search).get('auto_token');
   if (autoToken) {
     localStorage.setItem('ft_token', autoToken);
-    location.href = '/';
+    location.href = _HOME;
   }
 
   // Pre-fill token from URL ?token=...
@@ -93,7 +97,7 @@
     const err = document.getElementById('loginError');
     err.classList.add('hidden');
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch(_API_BASE + '/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -104,7 +108,7 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Erreur de connexion');
       localStorage.setItem('ft_token', data.token);
-      location.href = '/';
+      location.href = _HOME;
     } catch (ex) {
       err.textContent = ex.message;
       err.classList.remove('hidden');
@@ -116,7 +120,7 @@
     const err = document.getElementById('registerError');
     err.classList.add('hidden');
     try {
-      const res = await fetch('/api/auth/register', {
+      const res = await fetch(_API_BASE + '/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -129,7 +133,7 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Erreur d'inscription");
       localStorage.setItem('ft_token', data.token);
-      location.href = '/';
+      location.href = _HOME;
     } catch (ex) {
       err.textContent = ex.message;
       err.classList.remove('hidden');

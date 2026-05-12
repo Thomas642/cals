@@ -113,7 +113,13 @@ function clearBadge(key) {
 let socket;
 
 function setupSocket() {
-  socket = io({ auth: { token: localStorage.getItem('ft_token') } });
+  // In Capacitor the page has no origin, so io() must connect to the explicit server URL.
+  const socketUrl = (window.Capacitor?.isNativePlatform?.())
+    ? 'https://famille.gameone-val.com'
+    : undefined;
+  socket = socketUrl
+    ? io(socketUrl, { auth: { token: localStorage.getItem('ft_token') } })
+    : io({ auth: { token: localStorage.getItem('ft_token') } });
 
   socket.on('position_update', (data) => {
     MapModule.updateMember(data);

@@ -39,7 +39,12 @@ const server = http.createServer(app);
 // ── Socket.io ────────────────────────────────────────────────────────────────
 const io = new Server(server, {
     cors: {
-        origin: process.env.FRONTEND_URL || '*',
+        origin: (origin, cb) => {
+            if (!origin) return cb(null, true);
+            if (_allowedOrigins.has(origin)) return cb(null, true);
+            if (!process.env.FRONTEND_URL) return cb(null, true);
+            cb(new Error(`CORS blocked: ${origin}`));
+        },
         credentials: true,
     },
 });
@@ -80,8 +85,23 @@ app.use(helmet({
     contentSecurityPolicy: false, // handled by Nginx
 }));
 
+// Accept both the web origin and the Capacitor native app origins
+const _allowedOrigins = new Set([
+    process.env.FRONTEND_URL,
+    'capacitor://localhost',
+    'https://localhost',
+    'http://localhost',
+].filter(Boolean));
+
 app.use(cors({
-    origin: process.env.FRONTEND_URL || '*',
+    origin: (origin, cb) => {
+        // No origin = server-to-server or same-origin — allow
+        if (!origin) return cb(null, true);
+        if (_allowedOrigins.has(origin)) return cb(null, true);
+        // Fallback: allow everything if no FRONTEND_URL configured
+        if (!process.env.FRONTEND_URL) return cb(null, true);
+        cb(new Error(`CORS blocked: ${origin}`));
+    },
     credentials: true,
 }));
 

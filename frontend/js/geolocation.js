@@ -1,11 +1,17 @@
 // ── GPS sharing module ───────────────────────────────────────────────────────
 const GeoModule = (() => {
+  // Detect Capacitor native context
+  const IS_NATIVE = !!(window.Capacitor?.isNativePlatform?.());
+
   let watchId      = null;
   let sendInterval = null;
   let lastPosition = null;
   let isPrivate    = false;
   let intervalSec  = 30;
   let wakeLock     = null;
+
+  // Capacitor BackgroundGeolocation watcher id
+  let bgWatcherId  = null;
 
   // Speed alert
   let speedLimitKmh      = 110;
@@ -43,8 +49,20 @@ const GeoModule = (() => {
   // ── Start / Stop ─────────────────────────────────────────────────────────────
   function start(intervalSeconds = 30) {
     intervalSec = intervalSeconds;
-    if (watchId) navigator.geolocation.clearWatch(watchId);
 
+    if (IS_NATIVE) {
+      startNative();
+    } else {
+      startWeb();
+    }
+
+    requestWakeLock();
+    scheduleSend();
+    console.log('[GPS] Started, interval:', intervalSec, 's', IS_NATIVE ? '(native)' : '(web)');
+  }
+
+  function startWeb() {
+    if (watchId) navigator.geolocation.clearWatch(watchId);
     watchId = navigator.geolocation.watchPosition(
       (pos) => {
         lastPosition = pos;
@@ -54,13 +72,61 @@ const GeoModule = (() => {
       (err) => console.warn('[GPS] error:', err),
       { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
     );
+  }
 
-    requestWakeLock();
-    scheduleSend();
-    console.log('[GPS] Started, interval:', intervalSec, 's');
+  async function startNative() {
+    // Remove previous watcher if any
+    if (bgWatcherId !== null) {
+      try {
+        const BGGeo = window.Capacitor.Plugins.BackgroundGeolocation;
+        await BGGeo.removeWatcher({ id: bgWatcherId });
+      } catch {}
+      bgWatcherId = null;
+    }
+
+    try {
+      const BGGeo = window.Capacitor.Plugins.BackgroundGeolocation;
+      bgWatcherId = await BGGeo.addWatcher(
+        {
+          backgroundMessage: 'FamilyTracker partage votre position.',
+          backgroundTitle:   'FamilyTracker actif',
+          requestPermissions: true,
+          stale: false,
+          distanceFilter: 10,
+        },
+        (location, error) => {
+          if (error) { console.warn('[GPS native] error:', error.code); return; }
+          // Normalise to Web Geolocation API shape so existing code works
+          const pos = {
+            coords: {
+              latitude:  location.latitude,
+              longitude: location.longitude,
+              accuracy:  location.accuracy,
+              speed:     location.speed,       // already m/s or null
+              altitude:  location.altitude,
+            },
+            timestamp: location.time,
+          };
+          lastPosition = pos;
+          checkSpeedAlert(pos);
+          checkDrivingMode(pos.coords.speed != null ? pos.coords.speed * 3.6 : 0);
+        }
+      );
+      console.log('[GPS native] watcher id:', bgWatcherId);
+    } catch (err) {
+      console.error('[GPS native] Failed to start, falling back to web:', err);
+      startWeb();
+    }
   }
 
   function stop() {
+    if (IS_NATIVE && bgWatcherId !== null) {
+      try {
+        const BGGeo = window.Capacitor.Plugins.BackgroundGeolocation;
+        BGGeo.removeWatcher({ id: bgWatcherId });
+      } catch {}
+      bgWatcherId = null;
+    }
     if (watchId != null)   { navigator.geolocation.clearWatch(watchId); watchId = null; }
     if (sendInterval)      { clearTimeout(sendInterval); sendInterval = null; }
     if (drivingStopTimer)  { clearTimeout(drivingStopTimer); drivingStopTimer = null; }
