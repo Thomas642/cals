@@ -87,11 +87,62 @@ const RoutingModule = (() => {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   }
 
+  // ── Floating search overlay (where do you want to go?) ────────────────────
+  function openSearch() {
+    document.getElementById('searchOverlay')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'searchOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:flex-start;justify-content:center;z-index:9999;padding:1rem';
+    overlay.innerHTML = `
+      <div style="background:var(--surface,#0f1629);border:1px solid var(--border);border-radius:14px;padding:.9rem 1rem;width:100%;max-width:480px;margin-top:60px;color:var(--text,#e2e8f0)">
+        <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.7rem">
+          <h3 style="margin:0;font-size:1rem;flex:1">Où aller ?</h3>
+          <button id="searchClose" class="btn btn-ghost btn-sm">✕</button>
+        </div>
+        <input type="text" id="searchInput" placeholder="Adresse, lieu, ville…" autocomplete="off" autofocus
+          style="width:100%;padding:.7rem 1rem;background:var(--surface2);border:1.5px solid var(--border);border-radius:10px;color:var(--text);font-size:.95rem;font-family:inherit">
+        <div id="searchResults" style="margin-top:.5rem;max-height:60vh;overflow-y:auto"></div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const input = document.getElementById('searchInput');
+    const results = document.getElementById('searchResults');
+    document.getElementById('searchClose').onclick = () => overlay.remove();
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    let debounce = null;
+    input.addEventListener('input', () => {
+      clearTimeout(debounce);
+      const q = input.value.trim();
+      if (q.length < 3) { results.innerHTML = ''; return; }
+      debounce = setTimeout(async () => {
+        const items = await geocode(q);
+        if (!items.length) {
+          results.innerHTML = '<div style="padding:.6rem;color:var(--text-muted);font-size:.85rem">Aucun résultat</div>';
+          return;
+        }
+        results.innerHTML = items.map((r, i) => `
+          <div class="search-result" data-i="${i}" style="padding:.6rem .8rem;border-bottom:1px solid var(--border);cursor:pointer;font-size:.85rem">
+            <div style="font-weight:600">${(r.display_name || '').split(',')[0]}</div>
+            <div style="color:var(--text-muted);font-size:.78rem">${r.display_name}</div>
+          </div>`).join('');
+        results.querySelectorAll('.search-result').forEach((el) => {
+          el.onclick = () => {
+            const r = items[parseInt(el.dataset.i)];
+            overlay.remove();
+            openNavigation(r.latitude, r.longitude, (r.display_name || '').split(',').slice(0, 2).join(','));
+          };
+        });
+      }, 350);
+    });
+  }
+
   return {
     computeRoute,
     geocode,
     reverseGeocode,
     openNavigation,
+    openSearch,
     openInWaze,
     openInGoogleMaps,
   };

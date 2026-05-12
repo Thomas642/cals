@@ -406,15 +406,17 @@ html, body {
 .sos-alert-actions { display: flex; flex-direction: column; gap: .6rem; }
 
 /* ─── Floating action buttons ───────────────────────────────────────────────── */
-#locateBtn {
-  position: absolute; bottom: 82px; left: 16px; z-index: 800;
+#locateBtn, #searchBtn {
+  position: absolute; left: 16px; z-index: 800;
   width: 46px; height: 46px; border-radius: 50%;
   background: var(--glass); backdrop-filter: blur(14px);
   color: var(--primary-l); border: 1px solid var(--glass-border);
   cursor: pointer; display: flex; align-items: center; justify-content: center;
   box-shadow: var(--shadow-glow); transition: all .2s;
 }
-#locateBtn:hover {
+#locateBtn { bottom: 82px; }
+#searchBtn { bottom: 12px; }
+#locateBtn:hover, #searchBtn:hover {
   background: rgba(99,102,241,.2); border-color: rgba(99,102,241,.5);
   box-shadow: 0 0 18px rgba(99,102,241,.35), 0 4px 16px rgba(0,0,0,.4);
 }
