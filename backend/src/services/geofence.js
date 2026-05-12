@@ -59,25 +59,28 @@ async function triggerZoneEvent(type, userId, zone, io) {
     // WebSocket broadcast
     if (io) io.emit(type, payload);
 
-    // Push to notified members
+    // Push: use notify_members list if set, otherwise broadcast to all family (except triggering user)
+    const action = type === 'geofence_enter' ? 'est arrivé(e) à' : 'a quitté';
+    const pushBody = JSON.stringify({
+        title: `📍 ${user.name} ${action} "${zone.name}"`,
+        body:  new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        icon:  '/icons/icon-192.png',
+        data:  payload,
+    });
+
+    let subsQuery, subsParams;
     if (zone.notify_members?.length) {
-        const { rows } = await pool.query(
-            'SELECT push_subscription FROM users WHERE id = ANY($1) AND push_subscription IS NOT NULL',
-            [zone.notify_members]
-        );
-
-        const action = type === 'geofence_enter' ? 'entered' : 'left';
-        const pushBody = JSON.stringify({
-            title: `📍 ${user.name} ${action} "${zone.name}"`,
-            body: '',
-            icon: '/icons/icon-192.png',
-            data: payload,
-        });
-
-        await Promise.allSettled(
-            rows.map((r) => webpush.sendNotification(r.push_subscription, pushBody))
-        );
+        subsQuery  = 'SELECT push_subscription FROM users WHERE id = ANY($1) AND push_subscription IS NOT NULL';
+        subsParams = [zone.notify_members];
+    } else {
+        subsQuery  = 'SELECT push_subscription FROM users WHERE is_active = TRUE AND id != $1 AND push_subscription IS NOT NULL';
+        subsParams = [userId];
     }
+
+    const { rows } = await pool.query(subsQuery, subsParams);
+    await Promise.allSettled(
+        rows.map((r) => webpush.sendNotification(r.push_subscription, pushBody))
+    );
 }
 
 function haversineMeters(lat1, lon1, lat2, lon2) {

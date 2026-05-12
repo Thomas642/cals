@@ -17,6 +17,7 @@ const historyRoutes = require('./routes/history');
 const zonesRoutes = require('./routes/zones');
 const membersRoutes = require('./routes/members');
 const notifyRoutes = require('./routes/notify');
+const chatRoutes   = require('./routes/chat');
 const { startWatchdog } = require('./services/watchdog');
 const placesRoutes = require('./routes/places');
 
@@ -111,6 +112,7 @@ app.use('/api/history', apiLimiter, historyRoutes);
 app.use('/api/zones', apiLimiter, zonesRoutes);
 app.use('/api/members', apiLimiter, membersRoutes);
 app.use('/api/notify', apiLimiter, notifyRoutes);
+app.use('/api/chat',   apiLimiter, chatRoutes);
 app.use('/api/places', apiLimiter, placesRoutes);
 
 // VAPID public key (needed by the frontend to subscribe to push)
@@ -180,6 +182,19 @@ async function runMigrations() {
     await pool.query(`
         CREATE INDEX IF NOT EXISTS notifications_log_sent_at_idx
             ON notifications_log(sent_at DESC)
+    `);
+
+    // Chat messages
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS messages (
+            id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            text    VARCHAR(1000) NOT NULL,
+            sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    `);
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS messages_sent_at_idx ON messages(sent_at DESC)
     `);
 }
 

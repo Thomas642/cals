@@ -62,6 +62,9 @@
     ['Locate',        setupLocate],
     ['Socket',        setupSocket],
     ['Install',       setupInstall],
+    ['Chat',          setupChat],
+    ['Eta',           setupEta],
+    ['DrivingMode',   setupDrivingMode],
   ]) {
     if (!fn) continue;
     try { fn(); } catch (e) { console.warn(`[setup${name}]`, e.message); }
@@ -77,7 +80,7 @@ async function onSpeedAlert(speedKmh, lat, lon) {
 }
 
 // ── Notification badge state ──────────────────────────────────────────────────
-const unread = { members: 0, zones: 0, admin: 0 };
+const unread = { members: 0, zones: 0, admin: 0, chat: 0 };
 
 function incBadge(key) {
   unread[key] = (unread[key] || 0) + 1;
@@ -148,6 +151,21 @@ function setupSocket() {
     if (data?.member?.id === currentUser?.id) return;
     showToast(`⚠️ ${data.member.name} — ${data.speed} km/h`, 'Excès de vitesse détecté', 'warning');
     incBadge('members');
+  });
+
+  socket.on('chat_message', (msg) => {
+    if (msg.user_id === currentUser?.id) return; // already appended locally
+    appendChatMessage(msg);
+    scrollChatToBottom(true);
+    const chatOverlay = document.getElementById('chatOverlay');
+    if (chatOverlay?.classList.contains('hidden')) {
+      incBadge('chat');
+      showToast(`💬 ${msg.name}`, msg.text.slice(0, 60), 'message');
+    }
+  });
+
+  socket.on('chat_delete', ({ id }) => {
+    document.querySelector(`[data-msg-id="${id}"]`)?.remove();
   });
 
   socket.on('connect_error', (err) => {
@@ -1031,4 +1049,252 @@ function setupNavigation() {
   });
 
   document.getElementById('navZones').addEventListener('click', () => clearBadge('zones'), true);
+  document.getElementById('navChat').addEventListener('click', () => {
+    clearBadge('chat');
+    setupChatOpen();
+  });
+}
+
+// ── Chat ──────────────────────────────────────────────────────────────────────
+let chatLoaded = false;
+
+function setupChat() {
+  const overlay = document.getElementById('chatOverlay');
+  const input   = document.getElementById('chatInput');
+
+  document.getElementById('closeChat').addEventListener('click', () => {
+    overlay.classList.add('hidden');
+    setActiveNav('navMap');
+  });
+
+  // Close on overlay backdrop click
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      overlay.classList.add('hidden');
+      setActiveNav('navMap');
+    }
+  });
+
+  document.getElementById('chatSend').addEventListener('click', sendChatMessage);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
+  });
+}
+
+async function setupChatOpen() {
+  const overlay = document.getElementById('chatOverlay');
+  overlay.classList.remove('hidden');
+  setActiveNav('navChat');
+
+  if (!chatLoaded) {
+    await loadChatHistory();
+    chatLoaded = true;
+  }
+  scrollChatToBottom();
+  setTimeout(() => document.getElementById('chatInput').focus(), 200);
+}
+
+async function loadChatHistory() {
+  const container = document.getElementById('chatMessages');
+  container.innerHTML = '<div class="chat-loading">Chargement…</div>';
+  try {
+    const messages = await API.get('/api/chat?limit=50');
+    container.innerHTML = '';
+    if (!messages.length) {
+      container.innerHTML = '<div class="chat-empty">Aucun message. Soyez le premier ! 👋</div>';
+      return;
+    }
+    messages.forEach((m) => appendChatMessage(m));
+    scrollChatToBottom();
+  } catch (err) {
+    container.innerHTML = `<div class="chat-empty text-danger">Erreur : ${err.message}</div>`;
+  }
+}
+
+function appendChatMessage(msg) {
+  const container = document.getElementById('chatMessages');
+  if (!container) return;
+
+  const isMine = msg.user_id === currentUser?.id;
+  const time   = new Date(msg.sent_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  const initials = msg.name ? msg.name.slice(0, 2).toUpperCase() : '?';
+  const avatarContent = msg.avatar_url
+    ? `<img src="${msg.avatar_url}" alt="${msg.name}">`
+    : initials;
+
+  // Check if we should group with previous message (same user, within 3 min)
+  const lastBubble = container.querySelector('.chat-bubble-wrap:last-child');
+  const lastUserId = lastBubble?.dataset.userId;
+  const lastTime   = parseInt(lastBubble?.dataset.time || 0);
+  const grouped    = lastUserId === msg.user_id && (new Date(msg.sent_at) - lastTime) < 180_000;
+
+  const wrap = document.createElement('div');
+  wrap.className = `chat-bubble-wrap ${isMine ? 'mine' : 'theirs'}`;
+  wrap.dataset.userId = msg.user_id;
+  wrap.dataset.time   = new Date(msg.sent_at).getTime();
+  wrap.dataset.msgId  = msg.id;
+
+  wrap.innerHTML = `
+    ${!isMine && !grouped ? `
+      <div class="chat-avatar" style="background:${msg.color}">${avatarContent}</div>
+    ` : `<div class="chat-avatar-spacer"></div>`}
+    <div class="chat-bubble-col">
+      ${!isMine && !grouped ? `<div class="chat-sender">${msg.name}</div>` : ''}
+      <div class="chat-bubble">
+        <span class="chat-text">${escapeHtml(msg.text)}</span>
+        <span class="chat-time">${time}</span>
+      </div>
+    </div>`;
+
+  // Long-press to delete own messages
+  if (isMine) {
+    let holdTimer = null;
+    wrap.addEventListener('mousedown',  () => { holdTimer = setTimeout(() => confirmDeleteMsg(msg.id, wrap), 600); });
+    wrap.addEventListener('touchstart', () => { holdTimer = setTimeout(() => confirmDeleteMsg(msg.id, wrap), 600); }, { passive: true });
+    wrap.addEventListener('mouseup',    () => clearTimeout(holdTimer));
+    wrap.addEventListener('touchend',   () => clearTimeout(holdTimer));
+  }
+
+  container.appendChild(wrap);
+}
+
+async function confirmDeleteMsg(id, el) {
+  if (!confirm('Supprimer ce message ?')) return;
+  try {
+    await API.delete(`/api/chat/${id}`);
+    el.remove();
+  } catch (err) {
+    showToast('Erreur', err.message);
+  }
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById('chatInput');
+  const text  = input.value.trim();
+  if (!text) return;
+
+  input.value    = '';
+  input.disabled = true;
+
+  try {
+    const msg = await API.post('/api/chat', { text });
+    appendChatMessage(msg);
+    scrollChatToBottom();
+  } catch (err) {
+    showToast('Erreur', err.message);
+    input.value = text;
+  } finally {
+    input.disabled = false;
+    input.focus();
+  }
+}
+
+function scrollChatToBottom(smooth = false) {
+  const container = document.getElementById('chatMessages');
+  if (container) container.scrollTo({ top: container.scrollHeight, behavior: smooth ? 'smooth' : 'instant' });
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── ETA ───────────────────────────────────────────────────────────────────────
+let cachedPlaces = [];
+
+function setupEta() {
+  const etaBtn = document.getElementById('etaBtn');
+  const overlay = document.getElementById('etaOverlay');
+
+  etaBtn.addEventListener('click', async () => {
+    const latlng = GeoModule.getCurrentLatLng();
+    if (!latlng) {
+      showToast('⚠️ Position inconnue', 'Activez le partage GPS d\'abord', 'warning');
+      return;
+    }
+
+    // Load places if not cached
+    if (!cachedPlaces.length) {
+      try { cachedPlaces = await API.get('/api/places'); } catch {}
+    }
+
+    const speed = GeoModule.getCurrentSpeed(); // km/h
+    const effectiveSpeed = speed > 10 ? speed : 30; // default 30 km/h if stationary
+
+    const list = document.getElementById('etaPlaceList');
+    if (!cachedPlaces.length) {
+      list.innerHTML = '<p class="text-muted" style="font-size:.82rem">Aucun lieu favori enregistré. Créez-en depuis la carte (appui long).</p>';
+    } else {
+      list.innerHTML = cachedPlaces.map((p) => {
+        const distKm = haversineKm(latlng[0], latlng[1], p.latitude, p.longitude);
+        const etaMin = Math.round((distKm / effectiveSpeed) * 60);
+        const etaStr = etaMin < 1 ? '< 1 min' : etaMin < 60 ? `${etaMin} min` : `${Math.floor(etaMin/60)}h${etaMin%60 > 0 ? ` ${etaMin%60}min` : ''}`;
+        const icon   = { home:'🏠', work:'💼', school:'🏫', sport:'🏋️', shop:'🛒', star:'⭐' }[p.icon] || '📍';
+        return `
+          <div class="eta-place-row" data-name="${escapeHtml(p.name)}" data-eta="${etaStr}" data-icon="${icon}">
+            <div class="eta-place-info">
+              <span class="eta-place-icon">${icon}</span>
+              <span class="eta-place-name">${p.name}</span>
+            </div>
+            <div class="eta-place-time">
+              <span class="eta-place-duration">${etaStr}</span>
+              <span class="eta-place-dist">${distKm < 1 ? `${Math.round(distKm*1000)} m` : `${distKm.toFixed(1)} km`}</span>
+            </div>
+          </div>`;
+      }).join('');
+
+      list.querySelectorAll('.eta-place-row').forEach((row) => {
+        row.addEventListener('click', async () => {
+          const msg = `${row.dataset.icon} J'arrive dans ~${row.dataset.eta} à ${row.dataset.name}`;
+          await sendEta(msg);
+          overlay.classList.add('hidden');
+        });
+      });
+    }
+
+    overlay.classList.remove('hidden');
+  });
+
+  document.getElementById('etaSendCustom').addEventListener('click', async () => {
+    const dest = document.getElementById('etaCustomDest').value.trim();
+    if (!dest) { showToast('⚠️ Entrez une destination', ''); return; }
+    const latlng = GeoModule.getCurrentLatLng();
+    const speed  = latlng ? GeoModule.getCurrentSpeed() : 0;
+    // Can't calculate distance without a known place → just send without ETA time
+    await sendEta(`📍 En route vers ${dest}`);
+    document.getElementById('etaCustomDest').value = '';
+    overlay.classList.add('hidden');
+  });
+
+  document.getElementById('closeEta').addEventListener('click', () => {
+    overlay.classList.add('hidden');
+  });
+}
+
+async function sendEta(text) {
+  try {
+    await API.post('/api/notify/message', { text });
+    showToast('📍 ETA partagé', text, 'ok');
+  } catch (err) {
+    showToast('Erreur', err.message);
+  }
+}
+
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// ── Driving mode indicator ────────────────────────────────────────────────────
+function setupDrivingMode() {
+  document.addEventListener('driving-mode', (e) => {
+    const badge = document.getElementById('drivingBadge');
+    if (!badge) return;
+    badge.classList.toggle('hidden', !e.detail.active);
+    if (e.detail.active) {
+      showToast('🚗 Mode conduite activé', 'GPS toutes les 10 s · Écran maintenu allumé', 'ok');
+    }
+  });
 }

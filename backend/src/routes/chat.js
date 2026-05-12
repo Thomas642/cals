@@ -1,0 +1,100 @@
+const express = require('express');
+const webpush = require('web-push');
+const pool = require('../config/database');
+const { authenticate } = require('../middleware/auth');
+
+const router = express.Router();
+
+// GET /api/chat?limit=50&before=ISO_DATE
+router.get('/', authenticate, async (req, res) => {
+    try {
+        const limit  = Math.min(parseInt(req.query.limit) || 50, 100);
+        const before = req.query.before ? new Date(req.query.before) : new Date();
+
+        const { rows } = await pool.query(
+            `SELECT m.id, m.text, m.sent_at,
+                    u.id AS user_id, u.name, u.color, u.avatar_url
+             FROM messages m
+             JOIN users u ON u.id = m.user_id
+             WHERE m.sent_at <= $1
+             ORDER BY m.sent_at DESC
+             LIMIT $2`,
+            [before, limit]
+        );
+        res.json(rows.reverse());
+    } catch (err) {
+        console.error('[chat GET]', err);
+        res.status(500).json({ error: 'Failed to load messages' });
+    }
+});
+
+// POST /api/chat
+router.post('/', authenticate, async (req, res) => {
+    try {
+        const { text } = req.body;
+        if (!text?.trim()) return res.status(400).json({ error: 'text required' });
+        const trimmed = text.trim().slice(0, 1000);
+
+        const { rows } = await pool.query(
+            `INSERT INTO messages (user_id, text) VALUES ($1, $2)
+             RETURNING id, text, sent_at`,
+            [req.user.id, trimmed]
+        );
+
+        const message = {
+            ...rows[0],
+            user_id:    req.user.id,
+            name:       req.user.name,
+            color:      req.user.color,
+            avatar_url: req.user.avatar_url,
+        };
+
+        const io = req.app.get('io');
+        if (io) io.emit('chat_message', message);
+
+        // Push to other family members
+        const { rows: subs } = await pool.query(
+            `SELECT push_subscription FROM users
+             WHERE is_active = TRUE AND id != $1 AND push_subscription IS NOT NULL`,
+            [req.user.id]
+        );
+        const preview = trimmed.length > 80 ? trimmed.slice(0, 80) + '…' : trimmed;
+        await Promise.allSettled(
+            subs.map((r) =>
+                webpush.sendNotification(
+                    r.push_subscription,
+                    JSON.stringify({
+                        title: `💬 ${req.user.name}`,
+                        body:  preview,
+                        icon:  '/icons/icon-192.png',
+                        data:  message,
+                    })
+                )
+            )
+        );
+
+        res.json(message);
+    } catch (err) {
+        console.error('[chat POST]', err);
+        res.status(500).json({ error: 'Failed to send message' });
+    }
+});
+
+// DELETE /api/chat/:id — delete own message
+router.delete('/:id', authenticate, async (req, res) => {
+    try {
+        const { rowCount } = await pool.query(
+            'DELETE FROM messages WHERE id = $1 AND user_id = $2',
+            [req.params.id, req.user.id]
+        );
+        if (!rowCount) return res.status(404).json({ error: 'Message not found or not yours' });
+        const io = req.app.get('io');
+        if (io) io.emit('chat_delete', { id: req.params.id });
+        res.status(204).end();
+    } catch (err) {
+        console.error('[chat DELETE]', err);
+        res.status(500).json({ error: 'Failed to delete message' });
+    }
+});
+
+module.exports = router;
