@@ -167,6 +167,12 @@ html, body {
 }
 .topbar-actions { display: flex; gap: .45rem; align-items: center; }
 
+/* Hide button text labels on narrow screens — keep icons only */
+@media (max-width: 639px) {
+  .topbar-actions .btn-label { display: none; }
+  .topbar-actions .btn-sm { padding: .5rem; border-radius: 50%; }
+}
+
 /* ─── Main map area ─────────────────────────────────────────────────────────── */
 #main { flex: 1; position: relative; overflow: hidden; }
 #map  { width: 100%; height: 100%; }
