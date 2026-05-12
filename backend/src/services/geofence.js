@@ -44,6 +44,9 @@ async function triggerZoneEvent(type, userId, zone, io) {
     const user = userRows[0];
     if (!user) return;
 
+    const action = type === 'geofence_enter' ? 'est arrivé(e) à' : 'a quitté';
+    const emoji  = type === 'geofence_enter' ? '✅' : '👋';
+
     const payload = {
         type,
         zone: { id: zone.id, name: zone.name },
@@ -56,11 +59,28 @@ async function triggerZoneEvent(type, userId, zone, io) {
         [type, userId, payload]
     );
 
-    // WebSocket broadcast
-    if (io) io.emit(type, payload);
+    // Auto check-in: post a chat message visible to the whole family
+    const chatText = `${emoji} ${user.name} ${action} « ${zone.name} »`;
+    const { rows: msgRows } = await pool.query(
+        `INSERT INTO messages (user_id, text) VALUES ($1, $2) RETURNING id, user_id, text, sent_at`,
+        [userId, chatText]
+    );
+    const msg = msgRows[0];
 
-    // Push: use notify_members list if set, otherwise broadcast to all family (except triggering user)
-    const action = type === 'geofence_enter' ? 'est arrivé(e) à' : 'a quitté';
+    // WebSocket broadcast — zone event + auto chat message
+    if (io) {
+        io.emit(type, payload);
+        io.emit('chat_message', {
+            id:      msg.id,
+            user_id: userId,
+            name:    user.name,
+            color:   user.color,
+            text:    msg.text,
+            sent_at: msg.sent_at,
+            auto:    true,
+        });
+    }
+
     const pushBody = JSON.stringify({
         title: `📍 ${user.name} ${action} "${zone.name}"`,
         body:  new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),

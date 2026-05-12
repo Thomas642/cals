@@ -97,6 +97,43 @@ router.get('/stats/week', authenticate, async (req, res) => {
     }
 });
 
+// GET /api/history/stats/month — per-member summary for the last 30 days
+router.get('/stats/month', authenticate, async (req, res) => {
+    try {
+        const { rows } = await pool.query(`
+            SELECT user_id, name, color,
+                   COALESCE(ROUND(CAST(SUM(step_km) AS NUMERIC), 1), 0)                    AS distance_km,
+                   COUNT(DISTINCT day)                                                       AS active_days,
+                   COUNT(*)                                                                  AS position_count,
+                   COALESCE(ROUND(CAST(AVG(NULLIF(speed, 0)) AS NUMERIC), 0), 0)            AS avg_speed_kmh,
+                   COALESCE(ROUND(CAST(MAX(speed) AS NUMERIC), 0), 0)                       AS max_speed_kmh,
+                   COALESCE(ROUND(CAST(
+                       SUM(CASE WHEN speed >= 30 THEN step_km ELSE 0 END) AS NUMERIC
+                   ), 1), 0)                                                                 AS driving_km
+            FROM (
+                SELECT p.user_id, u.name, u.color, p.speed,
+                       DATE_TRUNC('day', p.recorded_at) AS day,
+                       COALESCE(
+                           ST_Distance(
+                               p.location::geometry,
+                               LAG(p.location::geometry) OVER (PARTITION BY p.user_id ORDER BY p.recorded_at)
+                           ) / 1000, 0
+                       ) AS step_km
+                FROM positions p
+                JOIN users u ON u.id = p.user_id
+                WHERE u.is_active = TRUE
+                  AND p.recorded_at >= NOW() - INTERVAL '30 days'
+            ) sub
+            GROUP BY user_id, name, color
+            ORDER BY distance_km DESC
+        `);
+        res.json(rows);
+    } catch (err) {
+        console.error('[history/stats/month]', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // GET /api/history/raw — raw points for a time range (used by GPX export)
 router.get('/raw', authenticate, async (req, res) => {
     const { userId, from, to } = req.query;
