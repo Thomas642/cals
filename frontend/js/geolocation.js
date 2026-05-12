@@ -1,23 +1,32 @@
 // ── GPS sharing module ───────────────────────────────────────────────────────
 const GeoModule = (() => {
-  let watchId = null;
+  let watchId      = null;
   let sendInterval = null;
   let lastPosition = null;
-  let isPrivate = false;
-  let intervalSec = 30;
-  let wakeLock = null;
+  let isPrivate    = false;
+  let intervalSec  = 30;
+  let wakeLock     = null;
 
   // Speed alert
-  let speedLimitKmh = 110;
+  let speedLimitKmh      = 110;
   let speedAlertCallback = null;
-  let lastSpeedAlertAt = 0;
-  const SPEED_ALERT_COOLDOWN_MS = 120_000; // 2 min between alerts
+  let lastSpeedAlertAt   = 0;
+  const SPEED_ALERT_COOLDOWN_MS = 120_000;
 
   // Stillness detection
   let lastSentPosition = null;
-  const STILL_THRESHOLD_M = 5;
-  const STILL_INTERVAL_MULTIPLIER = 3;
+  const STILL_THRESHOLD_M       = 5;
+  const STILL_INTERVAL_MULT     = 3;
 
+  // Driving mode
+  let drivingMode          = false;
+  let drivingStopTimer     = null;
+  let preDrivingIntervalSec = null;
+  const DRIVING_ON_KMH     = 20;  // speed to enter driving mode
+  const DRIVING_OFF_KMH    = 5;   // speed to start exit countdown
+  const DRIVING_OFF_DELAY  = 60_000; // 1 min of slow speed to exit
+
+  // ── Start / Stop ─────────────────────────────────────────────────────────────
   function start(intervalSeconds = 30) {
     intervalSec = intervalSeconds;
     if (watchId) navigator.geolocation.clearWatch(watchId);
@@ -26,6 +35,7 @@ const GeoModule = (() => {
       (pos) => {
         lastPosition = pos;
         checkSpeedAlert(pos);
+        checkDrivingMode(pos.coords.speed != null ? pos.coords.speed * 3.6 : 0);
       },
       (err) => console.warn('[GPS] error:', err),
       { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
@@ -37,14 +47,16 @@ const GeoModule = (() => {
   }
 
   function stop() {
-    if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
-    if (sendInterval)    { clearTimeout(sendInterval); sendInterval = null; }
+    if (watchId != null)   { navigator.geolocation.clearWatch(watchId); watchId = null; }
+    if (sendInterval)      { clearTimeout(sendInterval); sendInterval = null; }
+    if (drivingStopTimer)  { clearTimeout(drivingStopTimer); drivingStopTimer = null; }
     releaseWakeLock();
     lastPosition = null;
+    drivingMode  = false;
     console.log('[GPS] Stopped');
   }
 
-  // ── Speed alert ─────────────────────────────────────────────────────────────
+  // ── Speed alert ──────────────────────────────────────────────────────────────
   function checkSpeedAlert(pos) {
     if (!speedAlertCallback || !speedLimitKmh) return;
     const kmh = pos.coords.speed != null ? Math.round(pos.coords.speed * 3.6) : 0;
@@ -56,21 +68,55 @@ const GeoModule = (() => {
   }
 
   function setSpeedAlert(limitKmh, callback) {
-    speedLimitKmh = limitKmh;
+    speedLimitKmh      = limitKmh;
     speedAlertCallback = callback;
   }
 
-  // ── Wake Lock (keeps screen on for background tracking) ─────────────────────
+  // ── Driving mode ─────────────────────────────────────────────────────────────
+  function checkDrivingMode(speedKmh) {
+    if (isPrivate) return;
+
+    if (speedKmh >= DRIVING_ON_KMH) {
+      // Cancel any pending exit timer
+      if (drivingStopTimer) { clearTimeout(drivingStopTimer); drivingStopTimer = null; }
+
+      if (!drivingMode) {
+        drivingMode           = true;
+        preDrivingIntervalSec = intervalSec;
+        intervalSec           = 10;
+        requestWakeLock();
+        dispatchDrivingMode(true);
+        console.log('[GPS] Driving mode ON');
+      }
+    } else if (drivingMode && speedKmh < DRIVING_OFF_KMH && !drivingStopTimer) {
+      drivingStopTimer = setTimeout(() => {
+        drivingMode      = false;
+        drivingStopTimer = null;
+        if (preDrivingIntervalSec != null) {
+          intervalSec           = preDrivingIntervalSec;
+          preDrivingIntervalSec = null;
+        }
+        dispatchDrivingMode(false);
+        console.log('[GPS] Driving mode OFF');
+      }, DRIVING_OFF_DELAY);
+    }
+  }
+
+  function isDriving() { return drivingMode; }
+
+  function dispatchDrivingMode(active) {
+    document.dispatchEvent(new CustomEvent('driving-mode', { detail: { active } }));
+  }
+
+  // ── Wake Lock ────────────────────────────────────────────────────────────────
   async function requestWakeLock() {
     if (!('wakeLock' in navigator)) return;
     try {
       wakeLock = await navigator.wakeLock.request('screen');
       wakeLock.addEventListener('release', () => {
         wakeLock = null;
-        // Re-acquire when tab becomes visible again
         document.addEventListener('visibilitychange', reacquireWakeLock, { once: true });
       });
-      console.log('[WakeLock] Screen kept active');
       dispatchTrackingStatus(true);
     } catch (err) {
       console.warn('[WakeLock]', err.message);
@@ -95,13 +141,13 @@ const GeoModule = (() => {
 
   function isWakeLockActive() { return wakeLock !== null; }
 
-  // ── Position sending ────────────────────────────────────────────────────────
+  // ── Position sending ─────────────────────────────────────────────────────────
   function scheduleSend() {
     if (sendInterval) clearTimeout(sendInterval);
     const isStill = lastSentPosition && lastPosition &&
       distanceM(lastSentPosition, lastPosition.coords) < STILL_THRESHOLD_M;
-    const delay = isStill
-      ? intervalSec * STILL_INTERVAL_MULTIPLIER * 1000
+    const delay = (isStill && !drivingMode)
+      ? intervalSec * STILL_INTERVAL_MULT * 1000
       : intervalSec * 1000;
 
     sendInterval = setTimeout(async () => {
@@ -123,7 +169,7 @@ const GeoModule = (() => {
     try {
       await API.post('/api/positions', {
         latitude, longitude, accuracy,
-        speed: speed != null ? Math.round(speed * 3.6) : 0,
+        speed:   speed != null ? Math.round(speed * 3.6) : 0,
         battery,
       });
       lastSentPosition = { latitude, longitude };
@@ -139,7 +185,7 @@ const GeoModule = (() => {
 
   function setInterval_(sec) {
     intervalSec = sec;
-    if (!isPrivate) start(sec);
+    if (!isPrivate && !drivingMode) start(sec);
   }
 
   function getCurrentLatLng() {
@@ -147,7 +193,18 @@ const GeoModule = (() => {
     return [lastPosition.coords.latitude, lastPosition.coords.longitude];
   }
 
-  return { start, stop, setPrivate, setInterval: setInterval_, getCurrentLatLng, setSpeedAlert, isWakeLockActive };
+  function getCurrentSpeed() {
+    if (!lastPosition?.coords.speed) return 0;
+    return Math.round(lastPosition.coords.speed * 3.6);
+  }
+
+  return {
+    start, stop, setPrivate,
+    setInterval: setInterval_,
+    getCurrentLatLng, getCurrentSpeed,
+    setSpeedAlert,
+    isWakeLockActive, isDriving,
+  };
 })();
 
 function distanceM(a, b) {

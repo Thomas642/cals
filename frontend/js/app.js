@@ -62,6 +62,9 @@
     ['Locate',        setupLocate],
     ['Socket',        setupSocket],
     ['Install',       setupInstall],
+    ['Chat',          setupChat],
+    ['Eta',           setupEta],
+    ['DrivingMode',   setupDrivingMode],
   ]) {
     if (!fn) continue;
     try { fn(); } catch (e) { console.warn(`[setup${name}]`, e.message); }
@@ -77,7 +80,7 @@ async function onSpeedAlert(speedKmh, lat, lon) {
 }
 
 // ── Notification badge state ──────────────────────────────────────────────────
-const unread = { members: 0, zones: 0, admin: 0 };
+const unread = { members: 0, zones: 0, admin: 0, chat: 0 };
 
 function incBadge(key) {
   unread[key] = (unread[key] || 0) + 1;
@@ -148,6 +151,21 @@ function setupSocket() {
     if (data?.member?.id === currentUser?.id) return;
     showToast(`⚠️ ${data.member.name} — ${data.speed} km/h`, 'Excès de vitesse détecté', 'warning');
     incBadge('members');
+  });
+
+  socket.on('chat_message', (msg) => {
+    if (msg.user_id === currentUser?.id) return; // already appended locally
+    appendChatMessage(msg);
+    scrollChatToBottom(true);
+    const chatOverlay = document.getElementById('chatOverlay');
+    if (chatOverlay?.classList.contains('hidden')) {
+      incBadge('chat');
+      showToast(`💬 ${msg.name}`, msg.text.slice(0, 60), 'message');
+    }
+  });
+
+  socket.on('chat_delete', ({ id }) => {
+    document.querySelector(`[data-msg-id="${id}"]`)?.remove();
   });
 
   socket.on('connect_error', (err) => {
@@ -413,12 +431,14 @@ function setupPlaces() {
   document.getElementById('savePlace').addEventListener('click', async () => {
     const name = document.getElementById('placeName').value.trim();
     if (!name) { showToast('⚠️ Entrez un nom', ''); return; }
+    const notes = (document.getElementById('placeNotes')?.value || '').trim();
     try {
       const place = await API.post('/api/places', {
         name,
         icon: selectedIcon,
         latitude: pendingPlaceLat,
         longitude: pendingPlaceLng,
+        notes,
       });
       MapModule.addPlace(place);
       overlay.classList.add('hidden');
@@ -437,6 +457,19 @@ function setupPlaces() {
       await API.delete(`/api/places/${id}`);
       MapModule.removePlace(id);
       showToast('Lieu supprimé', '');
+    } catch (err) {
+      showToast('Erreur', err.message);
+    }
+  };
+
+  window._editPlaceNotesCallback = async (id, name) => {
+    const notes = prompt(`Notes pour « ${name } » :`, '');
+    if (notes === null) return;
+    try {
+      const updated = await API.patch(`/api/places/${id}`, { notes });
+      MapModule.removePlace(id);
+      MapModule.addPlace(updated);
+      showToast(`📝 Notes mises à jour`, '');
     } catch (err) {
       showToast('Erreur', err.message);
     }
@@ -461,6 +494,7 @@ function setupProfile() {
     }
 
     overlay.classList.remove('hidden');
+    loadShareLinks();
   });
 
   document.getElementById('closeProfile').addEventListener('click', () => {
@@ -521,6 +555,39 @@ function setupProfile() {
     });
   });
 
+  // Driving profile chips
+  const savedProfile = localStorage.getItem('ft_driving_profile') || 'car';
+  document.querySelectorAll('.profile-chip').forEach((chip) => {
+    if (chip.dataset.profile === savedProfile) chip.classList.add('active');
+    else chip.classList.remove('active');
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.profile-chip').forEach((c) => c.classList.remove('active'));
+      chip.classList.add('active');
+      const interval = parseInt(chip.dataset.interval);
+      document.getElementById('gpsInterval').value = interval;
+      localStorage.setItem('ft_driving_profile', chip.dataset.profile);
+      localStorage.setItem('ft_interval', interval);
+      GeoModule.setInterval(interval);
+      showToast(`${chip.textContent.trim()} activé`, `GPS toutes les ${interval}s`);
+    });
+  });
+
+  // SOS passif toggle
+  const sosPassiveToggle = document.getElementById('sosPassiveToggle');
+  sosPassiveToggle.checked = localStorage.getItem('ft_sos_passive') === '1';
+  updateSosPassiveStatus();
+  sosPassiveToggle.addEventListener('change', () => {
+    if (sosPassiveToggle.checked) {
+      startSosPassive();
+    } else {
+      stopSosPassive();
+    }
+    updateSosPassiveStatus();
+  });
+
+  // Share links
+  document.getElementById('createShareLink').addEventListener('click', createShareLink);
+
   document.getElementById('testPush').addEventListener('click', async () => {
     try {
       await PushModule.subscribe();
@@ -570,7 +637,13 @@ function setupHistory() {
         const w = new Date(today); w.setDate(w.getDate() - 6);
         document.getElementById('historyFrom').value = fmt(w);
         document.getElementById('historyTo').value   = fmt(today);
+      } else if (btn.dataset.shortcut === 'stats') {
+        document.getElementById('weekStatsContainer').classList.remove('hidden');
+        document.getElementById('tripList').innerHTML = '';
+        await loadWeekStats();
+        return;
       }
+      document.getElementById('weekStatsContainer').classList.add('hidden');
       await doLoadHistory();
     });
   });
@@ -590,6 +663,7 @@ async function doLoadHistory() {
   const to     = document.getElementById('historyTo').value;
   if (!userId) return;
 
+  document.getElementById('weekStatsContainer')?.classList.add('hidden');
   const container = document.getElementById('tripList');
   container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Chargement…</p>';
 
@@ -650,12 +724,14 @@ function renderTripList(trips, userId) {
       const e = new Date(t.ended_at).toLocaleTimeString('fr-FR',   { hour: '2-digit', minute: '2-digit' });
       const dur = formatDuration(t.started_at, t.ended_at);
       const maxSpd = t.max_speed_kmh || t.avg_speed_kmh || 0;
-      const isMoving = t.distance_km > 0.1;
       return `
         <div class="trip-card" data-index="${i}">
           <div class="trip-header">
             <span class="trip-time">${s} → ${e}</span>
-            <span class="trip-distance">${t.distance_km < 0.1 ? '< 0.1' : t.distance_km} km</span>
+            <div style="display:flex;align-items:center;gap:.4rem">
+              <span class="trip-distance">${t.distance_km < 0.1 ? '< 0.1' : t.distance_km} km</span>
+              <button class="btn-gpx" data-index="${i}" title="Exporter GPX">⬇️ GPX</button>
+            </div>
           </div>
           <div class="trip-meta">
             <span>⏱ ${dur}</span>
@@ -665,6 +741,14 @@ function renderTripList(trips, userId) {
           </div>
         </div>`;
     }).join('')}`;
+
+  container.querySelectorAll('.btn-gpx').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const trip = trips[parseInt(btn.dataset.index)];
+      exportGpx(trip);
+    });
+  });
 
   container.querySelectorAll('.trip-card').forEach((card) => {
     let holdTimer = null;
@@ -1012,6 +1096,23 @@ function setActiveNav(id) {
 }
 
 function setupNavigation() {
+  // Map theme toggle
+  const btnTheme = document.getElementById('btnMapTheme');
+  if (btnTheme) {
+    const updateThemeBtn = (theme) => {
+      const moonPath = 'M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z';
+      const sunPath  = 'M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2v-2H2v2zm18 0h2v-2h-2v2zM11 2v2h2V2h-2zm0 18v2h2v-2h-2zM5.99 4.58l-1.41 1.41 1.41 1.41 1.41-1.41-1.41-1.41zm12.02 12.02l-1.41 1.41 1.41 1.41 1.41-1.41-1.41-1.41zM18 6l-1.41-1.41-1.41 1.41 1.41 1.41L18 6zM7.42 18.02L5.99 19.44l1.41 1.41 1.41-1.41-1.39-1.42z';
+      btnTheme.querySelector('svg path').setAttribute('d', theme === 'dark' ? moonPath : sunPath);
+      btnTheme.title = theme === 'dark' ? 'Passer en carte claire' : 'Passer en carte sombre';
+    };
+    updateThemeBtn(MapModule.getTheme());
+    btnTheme.addEventListener('click', () => {
+      const next = MapModule.getTheme() === 'dark' ? 'light' : 'dark';
+      MapModule.setTheme(next);
+      updateThemeBtn(next);
+    });
+  }
+
   document.getElementById('navMap').addEventListener('click', () => {
     document.getElementById('sidebar').classList.remove('open');
     try { MapModule.clearTrip(); } catch {}
@@ -1031,4 +1132,432 @@ function setupNavigation() {
   });
 
   document.getElementById('navZones').addEventListener('click', () => clearBadge('zones'), true);
+  document.getElementById('navChat').addEventListener('click', () => {
+    clearBadge('chat');
+    setupChatOpen();
+  });
+}
+
+// ── Chat ──────────────────────────────────────────────────────────────────────
+let chatLoaded = false;
+
+function setupChat() {
+  const overlay = document.getElementById('chatOverlay');
+  const input   = document.getElementById('chatInput');
+
+  document.getElementById('closeChat').addEventListener('click', () => {
+    overlay.classList.add('hidden');
+    setActiveNav('navMap');
+  });
+
+  // Close on overlay backdrop click
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      overlay.classList.add('hidden');
+      setActiveNav('navMap');
+    }
+  });
+
+  document.getElementById('chatSend').addEventListener('click', sendChatMessage);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
+  });
+}
+
+async function setupChatOpen() {
+  const overlay = document.getElementById('chatOverlay');
+  overlay.classList.remove('hidden');
+  setActiveNav('navChat');
+
+  if (!chatLoaded) {
+    await loadChatHistory();
+    chatLoaded = true;
+  }
+  scrollChatToBottom();
+  setTimeout(() => document.getElementById('chatInput').focus(), 200);
+}
+
+async function loadChatHistory() {
+  const container = document.getElementById('chatMessages');
+  container.innerHTML = '<div class="chat-loading">Chargement…</div>';
+  try {
+    const messages = await API.get('/api/chat?limit=50');
+    container.innerHTML = '';
+    if (!messages.length) {
+      container.innerHTML = '<div class="chat-empty">Aucun message. Soyez le premier ! 👋</div>';
+      return;
+    }
+    messages.forEach((m) => appendChatMessage(m));
+    scrollChatToBottom();
+  } catch (err) {
+    container.innerHTML = `<div class="chat-empty text-danger">Erreur : ${err.message}</div>`;
+  }
+}
+
+function appendChatMessage(msg) {
+  const container = document.getElementById('chatMessages');
+  if (!container) return;
+
+  const isMine = msg.user_id === currentUser?.id;
+  const time   = new Date(msg.sent_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  const initials = msg.name ? msg.name.slice(0, 2).toUpperCase() : '?';
+  const avatarContent = msg.avatar_url
+    ? `<img src="${msg.avatar_url}" alt="${msg.name}">`
+    : initials;
+
+  // Check if we should group with previous message (same user, within 3 min)
+  const lastBubble = container.querySelector('.chat-bubble-wrap:last-child');
+  const lastUserId = lastBubble?.dataset.userId;
+  const lastTime   = parseInt(lastBubble?.dataset.time || 0);
+  const grouped    = lastUserId === msg.user_id && (new Date(msg.sent_at) - lastTime) < 180_000;
+
+  const wrap = document.createElement('div');
+  wrap.className = `chat-bubble-wrap ${isMine ? 'mine' : 'theirs'}`;
+  wrap.dataset.userId = msg.user_id;
+  wrap.dataset.time   = new Date(msg.sent_at).getTime();
+  wrap.dataset.msgId  = msg.id;
+
+  wrap.innerHTML = `
+    ${!isMine && !grouped ? `
+      <div class="chat-avatar" style="background:${msg.color}">${avatarContent}</div>
+    ` : `<div class="chat-avatar-spacer"></div>`}
+    <div class="chat-bubble-col">
+      ${!isMine && !grouped ? `<div class="chat-sender">${msg.name}</div>` : ''}
+      <div class="chat-bubble">
+        <span class="chat-text">${escapeHtml(msg.text)}</span>
+        <span class="chat-time">${time}</span>
+      </div>
+    </div>`;
+
+  // Long-press to delete own messages
+  if (isMine) {
+    let holdTimer = null;
+    wrap.addEventListener('mousedown',  () => { holdTimer = setTimeout(() => confirmDeleteMsg(msg.id, wrap), 600); });
+    wrap.addEventListener('touchstart', () => { holdTimer = setTimeout(() => confirmDeleteMsg(msg.id, wrap), 600); }, { passive: true });
+    wrap.addEventListener('mouseup',    () => clearTimeout(holdTimer));
+    wrap.addEventListener('touchend',   () => clearTimeout(holdTimer));
+  }
+
+  container.appendChild(wrap);
+}
+
+async function confirmDeleteMsg(id, el) {
+  if (!confirm('Supprimer ce message ?')) return;
+  try {
+    await API.delete(`/api/chat/${id}`);
+    el.remove();
+  } catch (err) {
+    showToast('Erreur', err.message);
+  }
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById('chatInput');
+  const text  = input.value.trim();
+  if (!text) return;
+
+  input.value    = '';
+  input.disabled = true;
+
+  try {
+    const msg = await API.post('/api/chat', { text });
+    appendChatMessage(msg);
+    scrollChatToBottom();
+  } catch (err) {
+    showToast('Erreur', err.message);
+    input.value = text;
+  } finally {
+    input.disabled = false;
+    input.focus();
+  }
+}
+
+function scrollChatToBottom(smooth = false) {
+  const container = document.getElementById('chatMessages');
+  if (container) container.scrollTo({ top: container.scrollHeight, behavior: smooth ? 'smooth' : 'instant' });
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── ETA ───────────────────────────────────────────────────────────────────────
+let cachedPlaces = [];
+
+function setupEta() {
+  const etaBtn = document.getElementById('etaBtn');
+  const overlay = document.getElementById('etaOverlay');
+
+  etaBtn.addEventListener('click', async () => {
+    const latlng = GeoModule.getCurrentLatLng();
+    if (!latlng) {
+      showToast('⚠️ Position inconnue', 'Activez le partage GPS d\'abord', 'warning');
+      return;
+    }
+
+    // Load places if not cached
+    if (!cachedPlaces.length) {
+      try { cachedPlaces = await API.get('/api/places'); } catch {}
+    }
+
+    const speed = GeoModule.getCurrentSpeed(); // km/h
+    const effectiveSpeed = speed > 10 ? speed : 30; // default 30 km/h if stationary
+
+    const list = document.getElementById('etaPlaceList');
+    if (!cachedPlaces.length) {
+      list.innerHTML = '<p class="text-muted" style="font-size:.82rem">Aucun lieu favori enregistré. Créez-en depuis la carte (appui long).</p>';
+    } else {
+      list.innerHTML = cachedPlaces.map((p) => {
+        const distKm = haversineKm(latlng[0], latlng[1], p.latitude, p.longitude);
+        const etaMin = Math.round((distKm / effectiveSpeed) * 60);
+        const etaStr = etaMin < 1 ? '< 1 min' : etaMin < 60 ? `${etaMin} min` : `${Math.floor(etaMin/60)}h${etaMin%60 > 0 ? ` ${etaMin%60}min` : ''}`;
+        const icon   = { home:'🏠', work:'💼', school:'🏫', sport:'🏋️', shop:'🛒', star:'⭐' }[p.icon] || '📍';
+        return `
+          <div class="eta-place-row" data-name="${escapeHtml(p.name)}" data-eta="${etaStr}" data-icon="${icon}">
+            <div class="eta-place-info">
+              <span class="eta-place-icon">${icon}</span>
+              <span class="eta-place-name">${p.name}</span>
+            </div>
+            <div class="eta-place-time">
+              <span class="eta-place-duration">${etaStr}</span>
+              <span class="eta-place-dist">${distKm < 1 ? `${Math.round(distKm*1000)} m` : `${distKm.toFixed(1)} km`}</span>
+            </div>
+          </div>`;
+      }).join('');
+
+      list.querySelectorAll('.eta-place-row').forEach((row) => {
+        row.addEventListener('click', async () => {
+          const msg = `${row.dataset.icon} J'arrive dans ~${row.dataset.eta} à ${row.dataset.name}`;
+          await sendEta(msg);
+          overlay.classList.add('hidden');
+        });
+      });
+    }
+
+    overlay.classList.remove('hidden');
+  });
+
+  document.getElementById('etaSendCustom').addEventListener('click', async () => {
+    const dest = document.getElementById('etaCustomDest').value.trim();
+    if (!dest) { showToast('⚠️ Entrez une destination', ''); return; }
+    const latlng = GeoModule.getCurrentLatLng();
+    const speed  = latlng ? GeoModule.getCurrentSpeed() : 0;
+    // Can't calculate distance without a known place → just send without ETA time
+    await sendEta(`📍 En route vers ${dest}`);
+    document.getElementById('etaCustomDest').value = '';
+    overlay.classList.add('hidden');
+  });
+
+  document.getElementById('closeEta').addEventListener('click', () => {
+    overlay.classList.add('hidden');
+  });
+}
+
+async function sendEta(text) {
+  try {
+    await API.post('/api/notify/message', { text });
+    showToast('📍 ETA partagé', text, 'ok');
+  } catch (err) {
+    showToast('Erreur', err.message);
+  }
+}
+
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// ── Driving mode indicator ────────────────────────────────────────────────────
+function setupDrivingMode() {
+  document.addEventListener('driving-mode', (e) => {
+    const badge = document.getElementById('drivingBadge');
+    if (!badge) return;
+    badge.classList.toggle('hidden', !e.detail.active);
+    if (e.detail.active) {
+      showToast('🚗 Mode conduite activé', 'GPS toutes les 10 s · Écran maintenu allumé', 'ok');
+    }
+  });
+}
+
+// ── GPX Export ────────────────────────────────────────────────────────────────
+function exportGpx(trip) {
+  const fmt = (d) => new Date(d).toISOString();
+  const trkpts = trip.points.map((p) =>
+    `    <trkpt lat="${p.latitude}" lon="${p.longitude}">
+      <time>${fmt(p.recorded_at)}</time>${p.speed ? `\n      <speed>${(p.speed / 3.6).toFixed(2)}</speed>` : ''}
+    </trkpt>`
+  ).join('\n');
+
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="FamilyTracker" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><time>${fmt(trip.started_at)}</time></metadata>
+  <trk>
+    <name>Trajet ${new Date(trip.started_at).toLocaleDateString('fr-FR')}</name>
+    <trkseg>
+${trkpts}
+    </trkseg>
+  </trk>
+</gpx>`;
+
+  const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `trajet_${new Date(trip.started_at).toISOString().slice(0,10)}.gpx`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('⬇️ GPX exporté', `${trip.point_count} points · ${trip.distance_km} km`);
+}
+
+// ── Weekly stats ──────────────────────────────────────────────────────────────
+async function loadWeekStats() {
+  const container = document.getElementById('weekStatsContainer');
+  container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Chargement…</p>';
+  try {
+    const rows = await API.get('/api/history/stats/week');
+    if (!rows.length) {
+      container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Aucune donnée cette semaine</p>';
+      return;
+    }
+    const maxDist = Math.max(...rows.map((r) => parseFloat(r.distance_km)));
+    container.innerHTML = `
+      <div class="week-stats-title">📊 Résumé — 7 derniers jours</div>
+      ${rows.map((r) => {
+        const pct = maxDist > 0 ? (parseFloat(r.distance_km) / maxDist * 100).toFixed(0) : 0;
+        return `
+        <div class="week-stat-row">
+          <div class="week-stat-name" style="color:${r.color}">${r.name}</div>
+          <div class="week-stat-bar-wrap">
+            <div class="week-stat-bar" style="width:${pct}%;background:${r.color}"></div>
+          </div>
+          <div class="week-stat-vals">
+            <span class="week-stat-km">${r.distance_km} km</span>
+            <span class="week-stat-meta">${r.active_days}j · ${r.avg_speed_kmh} km/h moy.</span>
+          </div>
+        </div>`;
+      }).join('')}`;
+  } catch (err) {
+    container.innerHTML = `<p class="text-danger">Erreur : ${err.message}</p>`;
+  }
+}
+
+// ── SOS Passif (orientation) ──────────────────────────────────────────────────
+let _sosPassiveActive  = false;
+let _sosPassiveTimer   = null;
+let _sosPassiveSent    = false;
+
+function updateSosPassiveStatus() {
+  const el = document.getElementById('sosPassiveStatus');
+  if (!el) return;
+  const on = document.getElementById('sosPassiveToggle')?.checked;
+  el.classList.toggle('hidden', !on);
+}
+
+function startSosPassive() {
+  if (_sosPassiveActive) return;
+  if (!window.DeviceOrientationEvent) {
+    showToast('⚠️ Non supporté', 'Capteur d\'orientation non disponible', 'warning');
+    document.getElementById('sosPassiveToggle').checked = false;
+    return;
+  }
+  const doStart = () => {
+    _sosPassiveActive = true;
+    _sosPassiveSent   = false;
+    localStorage.setItem('ft_sos_passive', '1');
+    window.addEventListener('deviceorientation', _sosOrientationHandler);
+    showToast('🔒 SOS passif activé', 'Retournez le téléphone 10s pour alerter', 'ok');
+  };
+
+  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+    DeviceOrientationEvent.requestPermission().then((perm) => {
+      if (perm === 'granted') doStart();
+      else {
+        showToast('⚠️ Permission refusée', 'Autorisation capteur requise', 'warning');
+        document.getElementById('sosPassiveToggle').checked = false;
+      }
+    }).catch(() => {
+      document.getElementById('sosPassiveToggle').checked = false;
+    });
+  } else {
+    doStart();
+  }
+}
+
+function stopSosPassive() {
+  _sosPassiveActive = false;
+  localStorage.setItem('ft_sos_passive', '0');
+  window.removeEventListener('deviceorientation', _sosOrientationHandler);
+  if (_sosPassiveTimer) { clearTimeout(_sosPassiveTimer); _sosPassiveTimer = null; }
+}
+
+function _sosOrientationHandler(e) {
+  const beta = e.beta; // -180 to 180; face-down ≈ ±180
+  const faceDown = beta !== null && Math.abs(beta) > 155;
+  if (faceDown && !_sosPassiveTimer && !_sosPassiveSent) {
+    _sosPassiveTimer = setTimeout(async () => {
+      _sosPassiveSent = true;
+      _sosPassiveTimer = null;
+      try {
+        await API.post('/api/notify/sos', {});
+        showToast('🆘 SOS passif envoyé', 'Votre famille a été alertée en silence', 'warning');
+      } catch {}
+    }, 10_000);
+  } else if (!faceDown && _sosPassiveTimer) {
+    clearTimeout(_sosPassiveTimer);
+    _sosPassiveTimer = null;
+  }
+  if (!faceDown) _sosPassiveSent = false;
+}
+
+// Restore SOS passive on startup
+if (localStorage.getItem('ft_sos_passive') === '1') {
+  startSosPassive();
+}
+
+// ── Share Links ───────────────────────────────────────────────────────────────
+async function loadShareLinks() {
+  const container = document.getElementById('shareLinksContainer');
+  if (!container) return;
+  try {
+    const links = await API.get('/api/share');
+    if (!links.length) { container.innerHTML = ''; return; }
+    container.innerHTML = links.map((l) => {
+      const url     = `${location.origin}/share.html?t=${l.token}`;
+      const expires = new Date(l.expires_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      return `
+        <div class="share-link-row">
+          <div style="flex:1;min-width:0">
+            <div class="share-link-label">${escapeHtml(l.label || 'Lien sans titre')}</div>
+            <div class="share-link-url" title="${url}">${url}</div>
+            <div style="font-size:.72rem;color:var(--text-muted)">Expire aujourd'hui à ${expires}</div>
+          </div>
+          <div style="display:flex;gap:.4rem;flex-shrink:0">
+            <button class="btn btn-ghost btn-sm" onclick="navigator.clipboard.writeText('${url}');showToast('✅ Copié','')">Copier</button>
+            <button class="btn btn-danger btn-sm" data-revoke="${l.token}">✕</button>
+          </div>
+        </div>`;
+    }).join('');
+    container.querySelectorAll('[data-revoke]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        try {
+          await API.delete(`/api/share/${btn.dataset.revoke}`);
+          await loadShareLinks();
+          showToast('Lien révoqué', '');
+        } catch (err) { showToast('Erreur', err.message); }
+      });
+    });
+  } catch { container.innerHTML = ''; }
+}
+
+async function createShareLink() {
+  const label = document.getElementById('shareLabel').value.trim();
+  try {
+    await API.post('/api/share', { label });
+    document.getElementById('shareLabel').value = '';
+    showToast('🔗 Lien créé', 'Partageable 24h — visible dans votre profil', 'ok');
+    await loadShareLinks();
+  } catch (err) { showToast('Erreur', err.message); }
 }

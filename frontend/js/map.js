@@ -4,6 +4,13 @@ const MapModule = (() => {
   let pickingZone = false;
   let placeMarkers = {};
   let onLongPressCallback = null;
+  let tileLayer = null;
+  let currentTheme = localStorage.getItem('ft_map_theme') || 'dark';
+
+  const TILES = {
+    dark:  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+  };
 
   const PLACE_ICONS = {
     home: '🏠', work: '💼', school: '🏫', sport: '🏋️', shop: '🛒', star: '⭐',
@@ -16,7 +23,7 @@ const MapModule = (() => {
       zoomControl: false,
     });
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    tileLayer = L.tileLayer(TILES[currentTheme], {
       attribution: '© <a href="https://openstreetmap.org">OSM</a> © <a href="https://carto.com">CARTO</a>',
       maxZoom: 19,
       subdomains: 'abcd',
@@ -105,15 +112,19 @@ const MapModule = (() => {
   }
 
   function buildPopup(m) {
-    const age = m.recorded_at
-      ? timeAgo(new Date(m.recorded_at))
-      : 'inconnu';
+    const age = m.recorded_at ? timeAgo(new Date(m.recorded_at)) : 'inconnu';
     const bat = m.battery != null ? `🔋 ${m.battery}%` : '';
     const spd = m.speed ? `⚡ ${Math.round(m.speed)} km/h` : '';
+    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${m.latitude},${m.longitude}`;
+    const wazeUrl = `https://waze.com/ul?ll=${m.latitude},${m.longitude}&navigate=yes`;
     return `<b>${m.name}</b><br>
       ${m.status ? `<em>${m.status}</em><br>` : ''}
       ${bat} ${spd}<br>
-      <small>Mis à jour ${age}</small>`;
+      <small>Mis à jour ${age}</small><br>
+      <div style="display:flex;gap:.4rem;margin-top:.5rem">
+        <a href="${mapsUrl}" target="_blank" style="font-size:.75rem;color:var(--primary-l)">Google Maps</a>
+        <a href="${wazeUrl}" target="_blank" style="font-size:.75rem;color:var(--primary-l)">Waze</a>
+      </div>`;
   }
 
   function removeMember(id) {
@@ -209,10 +220,14 @@ const MapModule = (() => {
       popupAnchor: [0, -42],
     });
     const marker = L.marker([place.latitude, place.longitude], { icon, zIndexOffset: 500 }).addTo(map);
+    const notesHtml = place.notes
+      ? `<div style="font-size:.78rem;color:var(--text-muted);margin:.3rem 0;font-style:italic">${place.notes}</div>`
+      : '';
     marker.bindPopup(
-      `<strong>${emoji} ${place.name}</strong><br>
-      <button class="btn btn-danger btn-sm" style="margin-top:.5rem;width:100%" onclick="window._deletePlaceCallback && window._deletePlaceCallback('${place.id}')">Supprimer</button>`,
-      { maxWidth: 180 }
+      `<strong>${emoji} ${place.name}</strong>${notesHtml}
+      <button class="btn btn-ghost btn-sm" style="margin-top:.4rem;margin-right:.3rem" onclick="window._editPlaceNotesCallback && window._editPlaceNotesCallback('${place.id}','${place.name}')">✏️ Notes</button>
+      <button class="btn btn-danger btn-sm" style="margin-top:.4rem" onclick="window._deletePlaceCallback && window._deletePlaceCallback('${place.id}')">Supprimer</button>`,
+      { maxWidth: 220 }
     );
     placeMarkers[place.id] = marker;
   }
@@ -224,7 +239,27 @@ const MapModule = (() => {
     }
   }
 
-  return { init, updateMember, removeMember, focusMember, focusAll, showTrip, replayTrip, clearTrip, renderZones, setPickingZone, getMap, setOnLongPress, renderPlaces, addPlace, removePlace };
+  function setTheme(theme) {
+    if (!TILES[theme]) return;
+    currentTheme = theme;
+    localStorage.setItem('ft_map_theme', theme);
+    if (tileLayer) map.removeLayer(tileLayer);
+    tileLayer = L.tileLayer(TILES[theme], {
+      attribution: '© <a href="https://openstreetmap.org">OSM</a> © <a href="https://carto.com">CARTO</a>',
+      maxZoom: 19, subdomains: 'abcd',
+    }).addTo(map);
+    tileLayer.bringToBack();
+  }
+
+  function getTheme() { return currentTheme; }
+
+  return {
+    init, updateMember, removeMember, focusMember, focusAll,
+    showTrip, replayTrip, clearTrip,
+    renderZones, setPickingZone, getMap,
+    setOnLongPress, renderPlaces, addPlace, removePlace,
+    setTheme, getTheme,
+  };
 })();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

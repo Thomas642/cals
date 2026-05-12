@@ -14,16 +14,32 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 router.post('/', authenticate, async (req, res) => {
-    const { name, icon, latitude, longitude } = req.body;
+    const { name, icon, latitude, longitude, notes } = req.body;
     if (!name || latitude == null || longitude == null) {
         return res.status(400).json({ error: 'name, latitude et longitude requis' });
     }
     try {
         const { rows } = await pool.query(
-            `INSERT INTO places (name, icon, latitude, longitude, created_by)
-             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-            [name.trim(), icon || 'home', parseFloat(latitude), parseFloat(longitude), req.user.id]
+            `INSERT INTO places (name, icon, latitude, longitude, notes, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+            [name.trim(), icon || 'home', parseFloat(latitude), parseFloat(longitude),
+             (notes || '').trim().slice(0, 500), req.user.id]
         );
+        res.json(rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// PATCH /api/places/:id — update notes
+router.patch('/:id', authenticate, async (req, res) => {
+    try {
+        const { notes } = req.body;
+        const { rows } = await pool.query(
+            'UPDATE places SET notes = $1 WHERE id = $2 RETURNING *',
+            [(notes || '').trim().slice(0, 500), req.params.id]
+        );
+        if (!rows[0]) return res.status(404).json({ error: 'Not found' });
         res.json(rows[0]);
     } catch (err) {
         res.status(500).json({ error: err.message });

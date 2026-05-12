@@ -17,6 +17,8 @@ const historyRoutes = require('./routes/history');
 const zonesRoutes = require('./routes/zones');
 const membersRoutes = require('./routes/members');
 const notifyRoutes = require('./routes/notify');
+const chatRoutes   = require('./routes/chat');
+const shareRoutes  = require('./routes/share');
 const { startWatchdog } = require('./services/watchdog');
 const placesRoutes = require('./routes/places');
 
@@ -111,6 +113,8 @@ app.use('/api/history', apiLimiter, historyRoutes);
 app.use('/api/zones', apiLimiter, zonesRoutes);
 app.use('/api/members', apiLimiter, membersRoutes);
 app.use('/api/notify', apiLimiter, notifyRoutes);
+app.use('/api/chat',   apiLimiter, chatRoutes);
+app.use('/api/share',  apiLimiter, shareRoutes);
 app.use('/api/places', apiLimiter, placesRoutes);
 
 // VAPID public key (needed by the frontend to subscribe to push)
@@ -181,6 +185,38 @@ async function runMigrations() {
         CREATE INDEX IF NOT EXISTS notifications_log_sent_at_idx
             ON notifications_log(sent_at DESC)
     `);
+
+    // Chat messages
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS messages (
+            id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            text    VARCHAR(1000) NOT NULL,
+            sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    `);
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS messages_sent_at_idx ON messages(sent_at DESC)
+    `);
+
+    // Notes on places
+    await pool.query(`ALTER TABLE places ADD COLUMN IF NOT EXISTS notes VARCHAR(500) NOT NULL DEFAULT ''`);
+
+    // Share tokens (temporary public tracking links)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS share_tokens (
+            id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            token      VARCHAR(64) NOT NULL UNIQUE,
+            user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            label      VARCHAR(100) NOT NULL DEFAULT '',
+            expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '24 hours',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS share_tokens_token_idx ON share_tokens(token)`);
+
+    // Cleanup expired share tokens
+    await pool.query(`DELETE FROM share_tokens WHERE expires_at < NOW()`);
 }
 
 // ── Start ────────────────────────────────────────────────────────────────────
