@@ -89,17 +89,20 @@ const MapModule = (() => {
   }
 
   function createIcon(member) {
+    const ageMin = member.recorded_at ? (Date.now() - new Date(member.recorded_at)) / 60000 : Infinity;
+    const isOffline = ageMin > 10;
     const initials = member.name ? member.name.slice(0, 2).toUpperCase() : '?';
     const avatarContent = member.avatar_url
       ? `<img src="${member.avatar_url}" alt="">`
       : initials;
+    const offlineClass = isOffline ? ' offline' : '';
 
     const html = `
-      <div class="member-marker">
+      <div class="member-marker${offlineClass}">
         <div class="marker-avatar" style="border-color:${member.color};color:${member.color}">
           ${avatarContent}
         </div>
-        <div class="marker-name" style="color:${member.color}">${member.name}</div>
+        <div class="marker-name" style="color:${member.color}">${member.name}${isOffline ? '<span class="marker-offline-badge">⚫</span>' : ''}</div>
         <div class="marker-tail" style="border-top-color:${member.color}"></div>
       </div>`;
 

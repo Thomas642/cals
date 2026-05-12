@@ -87,6 +87,48 @@ router.post('/', authenticate, async (req, res) => {
     }
 });
 
+// POST /api/chat/:id/react — add/update reaction
+router.post('/:id/react', authenticate, async (req, res) => {
+    try {
+        const { emoji } = req.body;
+        if (!emoji) return res.status(400).json({ error: 'emoji required' });
+
+        await pool.query(
+            `INSERT INTO message_reactions (message_id, user_id, emoji)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (message_id, user_id) DO UPDATE SET emoji = $3, created_at = NOW()`,
+            [req.params.id, req.user.id, emoji]
+        );
+
+        const reaction = { message_id: req.params.id, user_id: req.user.id, name: req.user.name, emoji };
+        const io = req.app.get('io');
+        if (io) io.emit('chat_reaction', { type: 'add', ...reaction });
+
+        res.json(reaction);
+    } catch (err) {
+        console.error('[chat/react POST]', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// DELETE /api/chat/:id/react — remove own reaction
+router.delete('/:id/react', authenticate, async (req, res) => {
+    try {
+        await pool.query(
+            'DELETE FROM message_reactions WHERE message_id = $1 AND user_id = $2',
+            [req.params.id, req.user.id]
+        );
+
+        const io = req.app.get('io');
+        if (io) io.emit('chat_reaction', { type: 'remove', message_id: req.params.id, user_id: req.user.id });
+
+        res.status(204).end();
+    } catch (err) {
+        console.error('[chat/react DELETE]', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // DELETE /api/chat/:id — delete own message
 router.delete('/:id', authenticate, async (req, res) => {
     try {
