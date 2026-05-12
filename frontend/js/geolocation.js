@@ -335,10 +335,36 @@ const GeoModule = (() => {
     window.addEventListener('devicemotion', crashMotionHandler);
   }
 
+  function getCurrentAccuracy() {
+    return lastPosition?.coords.accuracy ?? null;
+  }
+
+  function getStatus() {
+    return {
+      active:        watchId !== null || bgWatcherId !== null,
+      native:        IS_NATIVE,
+      intervalSec,
+      drivingMode,
+      batterySaverActive,
+      isPrivate,
+      accuracyM:     getCurrentAccuracy(),
+      hasWakeLock:   wakeLock !== null,
+      lastFixAt:     lastPosition?.timestamp ?? null,
+    };
+  }
+
+  async function recalibrate() {
+    stop();
+    // brief pause before re-start to actually reset the watcher
+    await new Promise((r) => setTimeout(r, 300));
+    start(intervalSec);
+  }
+
   return {
     start, stop, setPrivate,
     setInterval: setInterval_,
-    getCurrentLatLng, getCurrentSpeed,
+    getCurrentLatLng, getCurrentSpeed, getCurrentAccuracy,
+    getStatus, recalibrate,
     setSpeedAlert, enableCrashDetection,
     isWakeLockActive, isDriving,
   };

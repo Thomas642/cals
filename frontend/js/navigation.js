@@ -9,6 +9,7 @@ const NavigationModule = (() => {
   let routeLayer    = null;
   let altLayers     = [];
   let arrowMarker   = null;
+  let userArrow     = null;        // first-person directional arrow (Leaflet marker with rotated divIcon)
   let destination   = null;        // { lat, lng, name }
   let steps         = [];          // [{ distance_m, duration_s, name, maneuver: {type, modifier, location, exit} }]
   let currentStep   = 0;
@@ -16,6 +17,10 @@ const NavigationModule = (() => {
   let totalDurationS = 0;
   let lastReroutAt  = 0;
   let posWatcher    = null;        // setInterval id
+  let followMode    = true;        // auto-pan to user; disabled when user manually drags
+  let lastHeading   = 0;
+  let lastUserPos   = null;
+  let mapDragHandler = null;
 
   // ── French translation of OSRM maneuvers ─────────────────────────────────
   const MODIFIER_FR = {
@@ -102,11 +107,92 @@ const NavigationModule = (() => {
     totalDurationS = data.duration_s;
 
     active = true;
+    followMode = true;
     showHUD();
     updateHUD();
+    enableFollowMode();
 
     // Poll GPS every 2 seconds to update step + detect off-route
     posWatcher = setInterval(tick, 2000);
+  }
+
+  // ── First-person / follow mode ────────────────────────────────────────────
+  function enableFollowMode() {
+    if (!map) return;
+    // Disable follow if user drags the map manually
+    mapDragHandler = () => {
+      if (!followMode) return;
+      followMode = false;
+      showRecenterButton();
+    };
+    map.on('dragstart', mapDragHandler);
+    map.on('zoomstart', (e) => {
+      // Only treat user-initiated zooms as "exited follow"
+      if (e.target?._zoomAnimated && e?.target?._animatingZoom === false) return;
+    });
+    centerOnUser(true);
+  }
+
+  function disableFollowMode() {
+    if (mapDragHandler && map) map.off('dragstart', mapDragHandler);
+    mapDragHandler = null;
+    document.getElementById('navRecenter')?.remove();
+    if (userArrow) { map.removeLayer(userArrow); userArrow = null; }
+  }
+
+  function showRecenterButton() {
+    if (document.getElementById('navRecenter')) return;
+    const btn = document.createElement('button');
+    btn.id = 'navRecenter';
+    btn.className = 'nav-recenter';
+    btn.innerHTML = '🎯 Re-centrer';
+    btn.onclick = () => {
+      followMode = true;
+      btn.remove();
+      centerOnUser(true);
+    };
+    document.body.appendChild(btn);
+  }
+
+  function centerOnUser(animate = false) {
+    const here = GeoModule.getCurrentLatLng();
+    if (!here || !map) return;
+    map.setView(here, 17, { animate });
+    updateUserArrow(here);
+  }
+
+  function updateUserArrow(latlng) {
+    if (!map) return;
+    // Heading: prefer GPS heading, fallback to bearing between consecutive positions
+    let heading = lastHeading;
+    if (lastUserPos) {
+      const computed = bearing(lastUserPos[0], lastUserPos[1], latlng[0], latlng[1]);
+      if (Number.isFinite(computed)) heading = computed;
+    }
+    lastUserPos = latlng;
+    lastHeading = heading;
+
+    const html = `<div class="nav-arrow" style="transform:rotate(${heading}deg)">▲</div>`;
+    if (!userArrow) {
+      userArrow = L.marker(latlng, {
+        icon: L.divIcon({ html, className: 'nav-arrow-wrap', iconSize: [44, 44], iconAnchor: [22, 22] }),
+        zIndexOffset: 3000,
+        interactive: false,
+      }).addTo(map);
+    } else {
+      userArrow.setLatLng(latlng);
+      userArrow.setIcon(L.divIcon({ html, className: 'nav-arrow-wrap', iconSize: [44, 44], iconAnchor: [22, 22] }));
+    }
+  }
+
+  // Bearing (degrees, 0 = North, clockwise) between two lat/lng pairs
+  function bearing(lat1, lng1, lat2, lng2) {
+    const toRad = (d) => d * Math.PI / 180;
+    const φ1 = toRad(lat1), φ2 = toRad(lat2);
+    const Δλ = toRad(lng2 - lng1);
+    const y = Math.sin(Δλ) * Math.cos(φ2);
+    const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
   }
 
   function stop() {
@@ -117,10 +203,12 @@ const NavigationModule = (() => {
     altLayers.forEach((l) => map.removeLayer(l));
     altLayers = [];
     if (arrowMarker) { map.removeLayer(arrowMarker); arrowMarker = null; }
+    disableFollowMode();
     hideHUD();
     destination = null;
     steps = [];
     currentStep = 0;
+    lastUserPos = null;
   }
 
   function isActive() { return active; }
@@ -177,6 +265,10 @@ const NavigationModule = (() => {
     if (!active) return;
     const here = GeoModule.getCurrentLatLng();
     if (!here) return;
+
+    // Update directional arrow & re-center if follow mode is on
+    updateUserArrow(here);
+    if (followMode) map.panTo(here, { animate: true, duration: 0.5 });
 
     // Advance to next step when we get close to the current maneuver location
     while (currentStep < steps.length - 1) {
