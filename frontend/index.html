@@ -494,8 +494,36 @@
   <div class="panel-sheet" id="adminPanel">
     <div class="panel-handle"></div>
     <div class="panel-title">Dashboard Admin</div>
+    <button class="btn btn-ghost btn-full" id="openAdminTools" style="margin-bottom:1rem">🛠️ Outils avancés (santé serveur · audit · limites)</button>
     <div id="adminContent"></div>
     <button class="btn btn-ghost btn-full mt-2" id="closeAdmin">Fermer</button>
+  </div>
+</div>
+
+<!-- Advanced admin tools modal: health / audit / per-user rate limits -->
+<div id="adminToolsOverlay" class="panel-overlay hidden">
+  <div class="panel-sheet" style="max-width:600px">
+    <div class="panel-handle"></div>
+    <div class="panel-title">🛠️ Outils admin</div>
+
+    <div class="tools-tabs" style="display:flex;gap:.3rem;margin-bottom:1rem">
+      <button class="btn btn-ghost btn-sm tools-tab active" data-tab="health">Santé</button>
+      <button class="btn btn-ghost btn-sm tools-tab" data-tab="audit">Audit</button>
+      <button class="btn btn-ghost btn-sm tools-tab" data-tab="limits">Limites</button>
+    </div>
+
+    <div id="tools-health" class="tools-pane">
+      <div id="healthBody" class="text-muted">Chargement…</div>
+    </div>
+    <div id="tools-audit" class="tools-pane hidden">
+      <div id="auditBody" class="text-muted">Chargement…</div>
+    </div>
+    <div id="tools-limits" class="tools-pane hidden">
+      <p class="text-muted" style="font-size:.82rem">Limite quotidienne par membre. Laissez vide pour pas de limite.</p>
+      <div id="limitsBody"></div>
+    </div>
+
+    <button class="btn btn-ghost btn-full mt-2" id="closeAdminTools">Fermer</button>
   </div>
 </div>
 
@@ -602,14 +630,14 @@
 <!-- Toast container -->
 <div id="toastContainer"></div>
 
-<script src="/js/api.js?v=12"></script>
-<script src="/js/auth.js?v=12"></script>
-<script src="/js/map.js?v=12"></script>
-<script src="/js/geolocation.js?v=12"></script>
-<script src="/js/notifications.js?v=12"></script>
-<script src="/js/routing.js?v=12"></script>
-<script src="/js/navigation.js?v=12"></script>
-<script src="/js/update-check.js?v=12"></script>
-<script src="/js/app.js?v=12"></script>
+<script src="/js/api.js?v=13"></script>
+<script src="/js/auth.js?v=13"></script>
+<script src="/js/map.js?v=13"></script>
+<script src="/js/geolocation.js?v=13"></script>
+<script src="/js/notifications.js?v=13"></script>
+<script src="/js/routing.js?v=13"></script>
+<script src="/js/navigation.js?v=13"></script>
+<script src="/js/update-check.js?v=13"></script>
+<script src="/js/app.js?v=13"></script>
 </body>
 </html>

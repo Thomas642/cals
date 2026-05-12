@@ -113,6 +113,7 @@ router.post('/invite', authenticate, async (req, res) => {
         [token, req.user.id]
     );
 
+    try { require('./admin').audit(req.user.id, 'invite_create', null, { token_prefix: token.slice(0, 8) }); } catch {}
     res.status(201).json({ token, url: `/register?token=${token}` });
 });
 

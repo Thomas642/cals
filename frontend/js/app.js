@@ -1270,6 +1270,141 @@ function setupAdmin() {
     overlay.classList.add('hidden');
     setActiveNav('navMap');
   });
+
+  setupAdminTools();
+}
+
+// ── Advanced admin tools (health / audit / limits) ─────────────────────────
+let _healthRefreshTimer = null;
+
+function setupAdminTools() {
+  const toolsOverlay = document.getElementById('adminToolsOverlay');
+  if (!toolsOverlay) return;
+
+  document.getElementById('openAdminTools')?.addEventListener('click', () => {
+    toolsOverlay.classList.remove('hidden');
+    switchTab('health');
+  });
+
+  document.getElementById('closeAdminTools')?.addEventListener('click', () => {
+    toolsOverlay.classList.add('hidden');
+    if (_healthRefreshTimer) { clearInterval(_healthRefreshTimer); _healthRefreshTimer = null; }
+  });
+
+  document.querySelectorAll('.tools-tab').forEach((btn) => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tools-tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.tools-pane').forEach((p) => p.classList.toggle('hidden', p.id !== `tools-${name}`));
+  if (_healthRefreshTimer) { clearInterval(_healthRefreshTimer); _healthRefreshTimer = null; }
+  if (name === 'health') {
+    loadHealth();
+    _healthRefreshTimer = setInterval(loadHealth, 15_000);
+  } else if (name === 'audit') {
+    loadAudit();
+  } else if (name === 'limits') {
+    loadLimits();
+  }
+}
+
+async function loadHealth() {
+  const body = document.getElementById('healthBody');
+  try {
+    const h = await API.get('/api/admin/health');
+    const dbColor    = h.db.status === 'ok' ? '#10b981' : '#ef4444';
+    const osrmColor  = h.osrm.status === 'ok' ? '#10b981' : '#f59e0b';
+    const diskPct    = parseInt(h.disk?.use_pct) || 0;
+    const diskColor  = diskPct < 70 ? '#10b981' : diskPct < 90 ? '#f59e0b' : '#ef4444';
+    const upHours    = Math.floor(h.uptime_s / 3600);
+    const upMin      = Math.floor((h.uptime_s % 3600) / 60);
+    body.innerHTML = `
+      <div class="health-grid">
+        <div class="health-card"><b style="color:${dbColor}">●</b> Base de données<br><span class="text-muted">${h.db.status}${h.db.size ? ` · ${h.db.size}` : ''}</span></div>
+        <div class="health-card"><b style="color:${osrmColor}">●</b> OSRM Routing<br><span class="text-muted">${h.osrm.status}</span></div>
+        <div class="health-card"><b style="color:${diskColor}">●</b> Disque<br><span class="text-muted">${h.disk ? `${h.disk.used}/${h.disk.size} (${h.disk.use_pct})` : '—'}</span></div>
+        <div class="health-card">⏱️ Uptime<br><span class="text-muted">${upHours}h ${upMin}min</span></div>
+        <div class="health-card">🧠 Mémoire<br><span class="text-muted">${h.memory.rss_mb} MB RSS</span></div>
+        <div class="health-card">📥 Positions 24h<br><span class="text-muted">${h.counts.positions_24h}</span></div>
+      </div>
+      <hr style="border-color:var(--border);margin:1rem 0">
+      <div style="font-size:.82rem;line-height:1.7">
+        <div>👥 Membres actifs : <b>${h.counts.users}</b></div>
+        <div>📍 Positions total : <b>${h.counts.positions.toLocaleString('fr-FR')}</b></div>
+        <div>💬 Messages chat : <b>${h.counts.messages.toLocaleString('fr-FR')}</b></div>
+        <div>🚧 Zones actives : <b>${h.counts.zones}</b></div>
+        <div>🔗 Liens partage actifs : <b>${h.counts.active_shares}</b></div>
+      </div>
+      <p class="text-muted" style="margin-top:.5rem;font-size:.72rem">Auto-refresh 15s · ${new Date(h.timestamp).toLocaleTimeString('fr-FR')}</p>`;
+  } catch (err) {
+    body.innerHTML = `<p style="color:#ef4444">Erreur : ${err.message}</p>`;
+  }
+}
+
+async function loadAudit() {
+  const body = document.getElementById('auditBody');
+  try {
+    const events = await API.get('/api/admin/audit?limit=100');
+    if (!events.length) { body.innerHTML = '<p class="text-muted">Aucun événement.</p>'; return; }
+    body.innerHTML = `
+      <div style="max-height:55vh;overflow-y:auto">
+      ${events.map((e) => `
+        <div style="padding:.5rem;border-bottom:1px solid var(--border);font-size:.82rem">
+          <div><b>${e.action}</b> <span class="text-muted">par ${e.actor_name || '—'}</span></div>
+          ${e.target_name ? `<div class="text-muted" style="font-size:.75rem">cible : ${e.target_name}</div>` : ''}
+          ${e.details && Object.keys(e.details).length ? `<code style="font-size:.7rem;color:var(--text-muted)">${escapeHtml(JSON.stringify(e.details))}</code>` : ''}
+          <div class="text-muted" style="font-size:.7rem">${new Date(e.created_at).toLocaleString('fr-FR')}</div>
+        </div>`).join('')}
+      </div>`;
+  } catch (err) {
+    body.innerHTML = `<p style="color:#ef4444">Erreur : ${err.message}</p>`;
+  }
+}
+
+async function loadLimits() {
+  const body = document.getElementById('limitsBody');
+  try {
+    const members = await API.get('/api/members');
+    body.innerHTML = members.map((m) => `
+      <div style="display:flex;align-items:center;gap:.4rem;padding:.5rem 0;border-bottom:1px solid var(--border)">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${m.color}"></span>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:.85rem">${m.name}</div>
+          <div class="text-muted" style="font-size:.72rem">${m.email}</div>
+        </div>
+        <input type="number" min="0" placeholder="∞" value="${m.rate_limit_positions_day ?? ''}"
+          data-uid="${m.id}" data-kind="pos" style="width:70px;padding:.3rem;font-size:.78rem;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text)" title="Positions / jour">
+        <input type="number" min="0" placeholder="∞" value="${m.rate_limit_messages_day ?? ''}"
+          data-uid="${m.id}" data-kind="msg" style="width:70px;padding:.3rem;font-size:.78rem;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text)" title="Messages / jour">
+        <button class="btn btn-primary btn-sm save-limit" data-uid="${m.id}">💾</button>
+      </div>
+    `).join('');
+
+    body.querySelectorAll('.save-limit').forEach((btn) => {
+      btn.onclick = async () => {
+        const uid = btn.dataset.uid;
+        const pos = body.querySelector(`input[data-uid="${uid}"][data-kind="pos"]`).value.trim();
+        const msg = body.querySelector(`input[data-uid="${uid}"][data-kind="msg"]`).value.trim();
+        try {
+          await API.put(`/api/admin/limits/${uid}`, {
+            positions_per_day: pos === '' ? null : parseInt(pos),
+            messages_per_day:  msg === '' ? null : parseInt(msg),
+          });
+          showToast('Limites mises à jour', '');
+        } catch (err) {
+          showToast('Erreur', err.message);
+        }
+      };
+    });
+  } catch (err) {
+    body.innerHTML = `<p style="color:#ef4444">Erreur : ${err.message}</p>`;
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 }
 
 async function renderAdminPanel() {

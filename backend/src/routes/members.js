@@ -5,6 +5,7 @@ const fs = require('fs');
 const multer = require('multer');
 const pool = require('../config/database');
 const { authenticate, requireAdmin } = require('../middleware/auth');
+const { audit } = require('./admin');
 
 const router = express.Router();
 
@@ -32,8 +33,10 @@ const upload = multer({
 
 // GET /api/members
 router.get('/', authenticate, async (req, res) => {
+    const isAdmin = req.user.role === 'admin';
+    const adminCols = isAdmin ? ', rate_limit_positions_day, rate_limit_messages_day' : '';
     const { rows } = await pool.query(
-        `SELECT id, name, email, color, avatar_url, role, status, is_active, created_at
+        `SELECT id, name, email, color, avatar_url, role, status, is_active, created_at${adminCols}
          FROM users
          ORDER BY created_at ASC`
     );
@@ -128,6 +131,7 @@ router.patch('/:id/activate', authenticate, requireAdmin, async (req, res) => {
         return res.status(400).json({ error: 'is_active (boolean) is required' });
     }
     await pool.query('UPDATE users SET is_active = $1 WHERE id = $2', [is_active, req.params.id]);
+    audit(req.user.id, is_active ? 'user_enable' : 'user_disable', req.params.id, {}).catch(() => {});
     res.json({ message: `Account ${is_active ? 'enabled' : 'disabled'}` });
 });
 
@@ -136,7 +140,9 @@ router.delete('/:id', authenticate, requireAdmin, async (req, res) => {
     if (req.params.id === req.user.id) {
         return res.status(400).json({ error: 'Cannot delete your own account' });
     }
+    const { rows } = await pool.query('SELECT name, email FROM users WHERE id = $1', [req.params.id]);
     await pool.query('DELETE FROM users WHERE id = $1', [req.params.id]);
+    audit(req.user.id, 'user_delete', req.params.id, { name: rows[0]?.name, email: rows[0]?.email }).catch(() => {});
     res.status(204).end();
 });
 
