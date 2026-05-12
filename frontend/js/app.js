@@ -242,15 +242,24 @@ function renderMemberList() {
         <span class="battery-pct">${bat}%</span>
       </span>` : '';
 
-    // ETA to home zone if member is moving
+    // ETA to home zone if member is moving (real route via OSRM, fallback to haversine)
     let etaHtml = '';
     if (m.speed > 5 && m.latitude && m.longitude) {
       const homeZone = zones.find((z) => z.name.toLowerCase().includes('maison') || z.name.toLowerCase().includes('home'));
       if (homeZone) {
         const distKm = haversineKm(m.latitude, m.longitude, homeZone.latitude, homeZone.longitude);
         if (distKm > 0.2) {
+          // Synchronous fallback estimate, refined async by OSRM
           const etaMin = Math.max(1, Math.round((distKm / m.speed) * 60 * 1.4));
-          etaHtml = `<span style="color:var(--primary-l)">🏠 ~${etaMin} min</span>`;
+          const etaId = `eta-${m.id}`;
+          etaHtml = `<span id="${etaId}" style="color:var(--primary-l)">🏠 ~${etaMin} min</span>`;
+          // Async OSRM refinement
+          RoutingModule.computeRoute(m.latitude, m.longitude, homeZone.latitude, homeZone.longitude)
+            .then((r) => {
+              if (!r) return;
+              const el = document.getElementById(etaId);
+              if (el) el.textContent = `🏠 ${Math.max(1, Math.round(r.duration_s / 60))} min`;
+            });
         }
       }
     }
@@ -947,10 +956,11 @@ function setupZones() {
   });
 
   document.getElementById('createZone').addEventListener('click', async () => {
-    const name   = document.getElementById('zoneName').value.trim();
-    const lat    = parseFloat(document.getElementById('zoneLat').value);
-    const lon    = parseFloat(document.getElementById('zoneLon').value);
-    const radius = parseInt(document.getElementById('zoneRadius').value);
+    const name    = document.getElementById('zoneName').value.trim();
+    const address = document.getElementById('zoneAddress').value.trim();
+    const lat     = parseFloat(document.getElementById('zoneLat').value);
+    const lon     = parseFloat(document.getElementById('zoneLon').value);
+    const radius  = parseInt(document.getElementById('zoneRadius').value);
 
     if (!name || isNaN(lat) || isNaN(lon) || isNaN(radius)) {
       showToast('Erreur', 'Tous les champs sont requis');
@@ -958,15 +968,65 @@ function setupZones() {
     }
 
     try {
-      await API.post('/api/zones', { name, latitude: lat, longitude: lon, radius });
+      await API.post('/api/zones', { name, latitude: lat, longitude: lon, radius, address });
       await loadZones();
       renderZoneList();
       document.getElementById('zoneName').value = '';
+      document.getElementById('zoneAddress').value = '';
       showToast('Zone créée', name);
     } catch (err) {
       showToast('Erreur', err.message);
     }
   });
+
+  // ── Address autocomplete on the zone form ────────────────────────────────
+  const addrInput = document.getElementById('zoneAddress');
+  const addrResults = document.getElementById('zoneAddressResults');
+  let addrDebounce = null;
+  let lastGeocodedAddress = '';
+
+  addrInput?.addEventListener('input', () => {
+    clearTimeout(addrDebounce);
+    const q = addrInput.value.trim();
+    if (q.length < 3) { addrResults.classList.add('hidden'); return; }
+    if (q === lastGeocodedAddress) return;
+    addrDebounce = setTimeout(async () => {
+      const results = await RoutingModule.geocode(q);
+      lastGeocodedAddress = q;
+      if (!results.length) { addrResults.classList.add('hidden'); return; }
+      addrResults.innerHTML = results.map((r, i) => `
+        <div class="addr-item" data-i="${i}">
+          <span class="addr-item-type">${r.type || ''}</span>${r.display_name}
+        </div>`).join('');
+      addrResults.classList.remove('hidden');
+      addrResults.querySelectorAll('.addr-item').forEach((el) => {
+        el.onclick = () => {
+          const r = results[parseInt(el.dataset.i)];
+          document.getElementById('zoneLat').value = r.latitude.toFixed(6);
+          document.getElementById('zoneLon').value = r.longitude.toFixed(6);
+          addrInput.value = r.display_name;
+          addrResults.classList.add('hidden');
+          if (window.MapModule) MapModule.getMap().setView([r.latitude, r.longitude], 15);
+        };
+      });
+    }, 400);
+  });
+
+  // Click outside → close results
+  document.addEventListener('click', (e) => {
+    if (!addrInput?.contains(e.target) && !addrResults?.contains(e.target)) {
+      addrResults?.classList.add('hidden');
+    }
+  });
+
+  // Expose reverse-geocode to map.js so it auto-fills when picking on map
+  window.reverseGeocodeForZone = async (lat, lng) => {
+    const r = await RoutingModule.reverseGeocode(lat, lng);
+    if (r?.display_name) {
+      addrInput.value = r.display_name;
+      lastGeocodedAddress = r.display_name;
+    }
+  };
 }
 
 function renderZoneList() {
@@ -980,18 +1040,31 @@ function renderZoneList() {
     const iNotified  = notifyAll || z.notify_members.includes(currentUser?.id);
     const bellIcon   = iNotified ? '🔔' : '🔕';
     const bellTitle  = iNotified ? 'Notifications actives — cliquer pour désactiver' : 'Notifications désactivées — cliquer pour activer';
+    const addr = z.address ? `<div class="text-muted" style="font-size:.75rem;margin-top:.15rem">📍 ${z.address}</div>` : '';
     return `
     <div class="zone-row" data-zone-id="${z.id}">
-      <div>
+      <div style="min-width:0;flex:1">
         <strong>${z.name}</strong>
         <div class="text-muted">${z.radius} m${notifyAll ? '' : ` · ${z.notify_members.length} destinataire(s)`}</div>
+        ${addr}
       </div>
       <div style="display:flex;gap:.4rem;align-items:center">
+        <button class="btn btn-ghost btn-sm btn-zone-nav" title="Démarrer un trajet" data-lat="${z.latitude}" data-lng="${z.longitude}" data-name="${z.name}">🧭</button>
         <button class="btn btn-ghost btn-sm btn-zone-bell" title="${bellTitle}" data-zone-id="${z.id}">${bellIcon}</button>
         <button class="btn btn-danger btn-sm btn-zone-del" data-id="${z.id}">✕</button>
       </div>
     </div>`;
   }).join('');
+
+  container.querySelectorAll('.btn-zone-nav').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      RoutingModule.openNavigation(
+        parseFloat(btn.dataset.lat),
+        parseFloat(btn.dataset.lng),
+        btn.dataset.name
+      );
+    });
+  });
 
   container.querySelectorAll('.btn-zone-del').forEach((btn) => {
     btn.addEventListener('click', async () => {
