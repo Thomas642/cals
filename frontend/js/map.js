@@ -22,6 +22,11 @@ const MapModule = (() => {
       center: [46.5, 2.5],
       zoom: 6,
       zoomControl: false,
+      // leaflet-rotate plugin enables map.setBearing / map.getBearing
+      rotate: true,         // requires leaflet-rotate plugin; option is silently ignored if absent
+      rotateControl: false,
+      bearing: 0,
+      touchRotate: false,    // the navigation module drives bearing, not finger gestures
     });
 
     tileLayer = L.tileLayer(TILES[currentTheme], {

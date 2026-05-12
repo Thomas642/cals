@@ -42,6 +42,7 @@ download_if_missing() {
 download_if_missing "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"        "frontend/vendor/leaflet.js"
 download_if_missing "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"       "frontend/vendor/leaflet.css"
 download_if_missing "https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js" "frontend/vendor/leaflet-heat.js"
+download_if_missing "https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js" "frontend/vendor/leaflet-rotate.js"
 download_if_missing "https://cdn.socket.io/4.7.5/socket.io.min.js"           "frontend/vendor/socket.io.js"
 
 # ── 3. Capacitor: add Android platform if missing ───────────────────────────

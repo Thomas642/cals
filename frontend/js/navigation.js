@@ -21,6 +21,10 @@ const NavigationModule = (() => {
   let lastHeading   = 0;
   let lastUserPos   = null;
   let mapDragHandler = null;
+  let rotateMap     = true;        // true → bearing follows user heading (Waze-style)
+  let voiceEnabled  = localStorage.getItem('ft_nav_voice') !== 'off';
+  let lastSpokenStep = -1;
+  let lastSpokenAt   = 0;
 
   // ── French translation of OSRM maneuvers ─────────────────────────────────
   const MODIFIER_FR = {
@@ -159,6 +163,16 @@ const NavigationModule = (() => {
     if (!here || !map) return;
     map.setView(here, 17, { animate });
     updateUserArrow(here);
+    applyBearing();
+  }
+
+  // Rotate the map so the user's heading is always "up" on screen (Waze-style).
+  // Requires the leaflet-rotate plugin (map.setBearing). Falls back to no-op.
+  function applyBearing() {
+    if (!rotateMap || !map || typeof map.setBearing !== 'function') return;
+    // Smooth out by snapping to nearest 5°
+    const target = Math.round(-lastHeading / 5) * 5;
+    map.setBearing(target);
   }
 
   function updateUserArrow(latlng) {
@@ -172,7 +186,10 @@ const NavigationModule = (() => {
     lastUserPos = latlng;
     lastHeading = heading;
 
-    const html = `<div class="nav-arrow" style="transform:rotate(${heading}deg)">▲</div>`;
+    // If the map itself is rotated to follow heading, the arrow stays
+    // upright (always pointing "screen-up"). Otherwise we rotate it manually.
+    const arrowDeg = (rotateMap && map && typeof map.setBearing === 'function') ? 0 : heading;
+    const html = `<div class="nav-arrow" style="transform:rotate(${arrowDeg}deg)">▲</div>`;
     if (!userArrow) {
       userArrow = L.marker(latlng, {
         icon: L.divIcon({ html, className: 'nav-arrow-wrap', iconSize: [44, 44], iconAnchor: [22, 22] }),
@@ -205,10 +222,15 @@ const NavigationModule = (() => {
     if (arrowMarker) { map.removeLayer(arrowMarker); arrowMarker = null; }
     disableFollowMode();
     hideHUD();
+    // Reset map orientation when leaving navigation
+    if (map && typeof map.setBearing === 'function') map.setBearing(0);
+    // Stop any ongoing TTS
+    if (window.speechSynthesis) speechSynthesis.cancel();
     destination = null;
     steps = [];
     currentStep = 0;
     lastUserPos = null;
+    lastSpokenStep = -1;
   }
 
   function isActive() { return active; }
@@ -268,7 +290,22 @@ const NavigationModule = (() => {
 
     // Update directional arrow & re-center if follow mode is on
     updateUserArrow(here);
-    if (followMode) map.panTo(here, { animate: true, duration: 0.5 });
+    if (followMode) {
+      map.panTo(here, { animate: true, duration: 0.5 });
+      applyBearing();
+    }
+
+    // Voice : announce upcoming maneuver once when within 250m and not yet
+    // spoken for this step
+    const step = steps[currentStep];
+    if (step?.maneuver?.location) {
+      const distToM = haversineKm(here[0], here[1], step.maneuver.location[1], step.maneuver.location[0]) * 1000;
+      if (currentStep !== lastSpokenStep && distToM < 250 && Date.now() - lastSpokenAt > 4000) {
+        speak(`Dans ${formatDistance(distToM)}, ${translate(step).toLowerCase()}`);
+        lastSpokenStep = currentStep;
+        lastSpokenAt = Date.now();
+      }
+    }
 
     // Advance to next step when we get close to the current maneuver location
     while (currentStep < steps.length - 1) {
@@ -283,6 +320,7 @@ const NavigationModule = (() => {
     if (distToDest < 40) {
       updateHUD(distToDest, true);
       showToast('🏁 Arrivé', destination.name || 'Destination atteinte');
+      speak(`Vous êtes arrivé${destination.name ? ' à ' + destination.name : ''}.`);
       stop();
       return;
     }
@@ -329,10 +367,33 @@ const NavigationModule = (() => {
         <div class="nav-hud-instruction" id="navHudInstruction">Démarrage…</div>
         <div class="nav-hud-meta" id="navHudMeta">— · —</div>
       </div>
+      <button class="nav-hud-stop" id="navHudVoice" title="${voiceEnabled ? 'Couper la voix' : 'Activer la voix'}">${voiceEnabled ? '🔊' : '🔇'}</button>
       <button class="nav-hud-stop" id="navHudStop" title="Arrêter">✕</button>
     `;
     document.body.appendChild(hud);
     document.getElementById('navHudStop').onclick = () => stop();
+    document.getElementById('navHudVoice').onclick = (e) => {
+      voiceEnabled = !voiceEnabled;
+      localStorage.setItem('ft_nav_voice', voiceEnabled ? 'on' : 'off');
+      e.currentTarget.textContent = voiceEnabled ? '🔊' : '🔇';
+      e.currentTarget.title = voiceEnabled ? 'Couper la voix' : 'Activer la voix';
+      if (!voiceEnabled && window.speechSynthesis) speechSynthesis.cancel();
+    };
+  }
+
+  // ── Text-to-speech (Web Speech API) ───────────────────────────────────────
+  function speak(text) {
+    if (!voiceEnabled || !window.speechSynthesis) return;
+    try {
+      speechSynthesis.cancel();           // drop any previous utterance
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang   = 'fr-FR';
+      u.rate   = 1.05;
+      u.volume = 1.0;
+      speechSynthesis.speak(u);
+    } catch (err) {
+      console.warn('[nav] TTS failed:', err.message);
+    }
   }
 
   function hideHUD() {
