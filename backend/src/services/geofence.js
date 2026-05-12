@@ -37,15 +37,38 @@ async function checkGeofences(userId, latitude, longitude, io) {
     }
 }
 
+// Map zone name to auto-status
+function getAutoStatus(zoneName) {
+    const n = zoneName.toLowerCase();
+    if (/maison|home/.test(n))              return '🏠 À la maison';
+    if (/école|ecole|school/.test(n))       return '🏫 À l\'école';
+    if (/travail|work|bureau/.test(n))      return '💼 Au travail';
+    if (/sport|gym/.test(n))                return '🏋️ Au sport';
+    if (/courses|shop/.test(n))             return '🛒 Aux courses';
+    return null;
+}
+
 async function triggerZoneEvent(type, userId, zone, io) {
     const { rows: userRows } = await pool.query(
-        'SELECT name, color FROM users WHERE id = $1', [userId]
+        'SELECT name, color, status FROM users WHERE id = $1', [userId]
     );
     const user = userRows[0];
     if (!user) return;
 
     const action = type === 'geofence_enter' ? 'est arrivé(e) à' : 'a quitté';
     const emoji  = type === 'geofence_enter' ? '✅' : '👋';
+
+    // Auto-status based on zone name
+    const autoStatus = getAutoStatus(zone.name);
+    if (autoStatus) {
+        if (type === 'geofence_enter') {
+            await pool.query('UPDATE users SET status = $1 WHERE id = $2', [autoStatus, userId]);
+            if (io) io.emit('status_update', { user_id: userId, status: autoStatus });
+        } else if (type === 'geofence_exit' && user.status === autoStatus) {
+            await pool.query('UPDATE users SET status = $1 WHERE id = $2', ['', userId]);
+            if (io) io.emit('status_update', { user_id: userId, status: '' });
+        }
+    }
 
     const payload = {
         type,

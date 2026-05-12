@@ -134,6 +134,36 @@ router.get('/stats/month', authenticate, async (req, res) => {
     }
 });
 
+// GET /api/history/stats/weekly-trend — per-week distance for last N weeks
+router.get('/stats/weekly-trend', authenticate, async (req, res) => {
+    try {
+        const weeks = Math.min(parseInt(req.query.weeks) || 4, 12);
+        const userId = req.query.userId || null;
+        const { rows } = await pool.query(`
+            SELECT DATE_TRUNC('week', p.recorded_at) AS week_start,
+                   DATE_TRUNC('week', p.recorded_at) + INTERVAL '6 days' AS week_end,
+                   COALESCE(ROUND(CAST(SUM(step_km) AS NUMERIC), 1), 0) AS distance_km
+            FROM (
+                SELECT p.recorded_at,
+                       COALESCE(ST_Distance(p.location::geometry,
+                           LAG(p.location::geometry) OVER (PARTITION BY p.user_id ORDER BY p.recorded_at)
+                       ) / 1000, 0) AS step_km
+                FROM positions p
+                JOIN users u ON u.id = p.user_id
+                WHERE u.is_active=TRUE
+                  AND ($1::uuid IS NULL OR p.user_id = $1)
+                  AND p.recorded_at >= NOW() - ($2 || ' weeks')::INTERVAL
+            ) sub
+            GROUP BY week_start, week_end
+            ORDER BY week_start ASC
+        `, [userId, weeks]);
+        res.json(rows);
+    } catch (err) {
+        console.error('[history/weekly-trend]', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // GET /api/history/timeline — chronological day view (stays + trips)
 router.get('/timeline', authenticate, async (req, res) => {
     try {

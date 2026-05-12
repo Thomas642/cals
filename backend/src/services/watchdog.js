@@ -13,8 +13,10 @@ const inactivityCooldown = new Map(); // userId → timestamp
 const scheduleCooldown   = new Map(); // alertId_date → boolean
 const lastMovedPos       = new Map(); // userId → {lat, lon, since}
 
-let weeklyReportDate = null;  // last date weekly report was sent (YYYY-MM-DD)
-let noneHomeSentDate = null;  // last date none-home alert was sent
+let weeklyReportDate  = null;  // last date weekly report was sent (YYYY-MM-DD)
+let monthlyReportDate = null;  // last month monthly report was sent (YYYY-MM)
+let noneHomeSentDate  = null;  // last date none-home alert was sent
+const curfewCooldown  = new Map(); // `${userId}_${zoneId}` → timestamp
 
 async function runWatchdog(io) {
     try {
@@ -104,6 +106,12 @@ async function runWatchdog(io) {
 
         // ── Weekly driving report (Sunday 20:00) ────────────────────────────────
         await checkWeeklyReport(io);
+
+        // ── Monthly report (1st of month 09:00) ─────────────────────────────────
+        await checkMonthlyReport(io);
+
+        // ── Curfew zones ─────────────────────────────────────────────────────────
+        await checkCurfew(io, rows);
 
     } catch (err) {
         console.error('[Watchdog]', err);
@@ -242,6 +250,107 @@ async function checkWeeklyReport(io) {
         );
     } catch (err) {
         console.error('[Watchdog/weeklyReport]', err);
+    }
+}
+
+// ── Monthly report (1st of month, 09:00) ─────────────────────────────────────
+async function checkMonthlyReport(io) {
+    const now = new Date();
+    if (now.getDate() !== 1 || now.getHours() !== 9) return;
+    const thisMonth = now.toISOString().slice(0, 7); // YYYY-MM
+    if (monthlyReportDate === thisMonth) return;
+    monthlyReportDate = thisMonth;
+
+    try {
+        const { rows } = await pool.query(`
+            SELECT user_id, name,
+                   COALESCE(ROUND(CAST(SUM(step_km) AS NUMERIC), 1), 0) AS distance_km,
+                   COUNT(DISTINCT DATE_TRUNC('day', recorded_at))        AS active_days,
+                   COALESCE(ROUND(CAST(MAX(speed) AS NUMERIC), 0), 0)   AS max_speed_kmh
+            FROM (
+                SELECT p.user_id, u.name, p.speed, p.recorded_at,
+                       COALESCE(ST_Distance(
+                           p.location::geometry,
+                           LAG(p.location::geometry) OVER (PARTITION BY p.user_id ORDER BY p.recorded_at)
+                       ) / 1000, 0) AS step_km
+                FROM positions p JOIN users u ON u.id = p.user_id
+                WHERE u.is_active=TRUE AND p.recorded_at >= NOW() - INTERVAL '30 days'
+            ) sub
+            GROUP BY user_id, name ORDER BY distance_km DESC
+        `);
+
+        if (!rows.length) return;
+
+        const top3 = rows.slice(0, 3);
+        const lines = top3.map((r, i) => {
+            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
+            return `${medal} ${r.name}: ${r.distance_km} km, ${r.active_days}j actifs`;
+        }).join('\n');
+
+        await notifyAll(io, 'monthly_report',
+            { type: 'monthly_report', stats: rows, sent_at: new Date().toISOString() },
+            {
+                title: '📅 Bilan mensuel Family Tracker',
+                body:  lines,
+            }
+        );
+    } catch (err) {
+        console.error('[Watchdog/monthlyReport]', err);
+    }
+}
+
+// ── Curfew zones check ────────────────────────────────────────────────────────
+async function checkCurfew(io, positions) {
+    try {
+        const { rows: safeZones } = await pool.query(
+            `SELECT id, name, radius,
+                    ST_Y(center::geometry) AS lat, ST_X(center::geometry) AS lon,
+                    curfew_start, curfew_end
+             FROM zones
+             WHERE zone_type = 'safe_zone' AND curfew_start IS NOT NULL AND is_active = TRUE`
+        );
+        if (!safeZones.length) return;
+
+        const now = new Date();
+        const nowMin = now.getHours() * 60 + now.getMinutes();
+
+        for (const zone of safeZones) {
+            const [sh, sm] = zone.curfew_start.slice(0, 5).split(':').map(Number);
+            const [eh, em] = zone.curfew_end.slice(0, 5).split(':').map(Number);
+            const startMin = sh * 60 + sm;
+            const endMin   = eh * 60 + em;
+
+            // Check if current time is in curfew window
+            const inCurfew = startMin <= endMin
+                ? nowMin >= startMin && nowMin <= endMin
+                : nowMin >= startMin || nowMin <= endMin; // overnight curfew
+
+            if (!inCurfew) continue;
+
+            // Check who's outside the zone
+            for (const pos of positions) {
+                if (!pos.latitude || !pos.longitude) continue;
+                const dist = haversineM(pos.latitude, pos.longitude, zone.lat, zone.lon);
+                const isInside = dist <= zone.radius;
+                if (isInside) continue;
+
+                const cooldownKey = `${pos.user_id}_${zone.id}`;
+                const lastAlert = curfewCooldown.get(cooldownKey) || 0;
+                if (Date.now() - lastAlert < ALERT_COOLDOWN_MS) continue;
+
+                curfewCooldown.set(cooldownKey, Date.now());
+                const member = { id: pos.user_id, name: pos.name, color: pos.color };
+                await notifyAll(io, 'curfew_alert',
+                    { type: 'curfew_alert', member, zone: { id: zone.id, name: zone.name }, sent_at: new Date().toISOString() },
+                    {
+                        title: `🔒 Couvre-feu — ${pos.name}`,
+                        body: `${pos.name} n'est pas dans la zone « ${zone.name} »`,
+                    }
+                );
+            }
+        }
+    } catch (err) {
+        console.error('[Watchdog/curfew]', err);
     }
 }
 

@@ -13,10 +13,17 @@ router.get('/', authenticate, async (req, res) => {
 
         const { rows } = await pool.query(
             `SELECT m.id, m.text, m.sent_at,
-                    u.id AS user_id, u.name, u.color, u.avatar_url
+                    u.id AS user_id, u.name, u.color, u.avatar_url,
+                    COALESCE(
+                        json_agg(json_build_object('emoji', r.emoji, 'user_id', r.user_id, 'name', ru.name))
+                        FILTER (WHERE r.emoji IS NOT NULL), '[]'
+                    ) AS reactions
              FROM messages m
              JOIN users u ON u.id = m.user_id
+             LEFT JOIN message_reactions r ON r.message_id = m.id
+             LEFT JOIN users ru ON ru.id = r.user_id
              WHERE m.sent_at <= $1
+             GROUP BY m.id, u.id, u.name, u.color, u.avatar_url
              ORDER BY m.sent_at DESC
              LIMIT $2`,
             [before, limit]
