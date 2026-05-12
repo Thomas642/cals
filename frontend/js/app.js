@@ -50,7 +50,14 @@
       try { await loadPlaces(); } catch (e) { console.warn('[places]', e.message); }
     }
 
-    setInterval(refreshPositions, 10_000);
+    // Fallback polling : ne s'exécute QUE si Socket.io est déconnecté ET
+    // que l'onglet/app est au premier plan. Évite ~10 calls API/min inutiles
+    // quand le temps réel marche (cas normal).
+    setInterval(() => {
+      if (document.hidden) return;
+      if (socket?.connected) return;
+      refreshPositions().catch(() => {});
+    }, 10_000);
 
   } catch (e) {
     console.error('[bootstrap init]', e);
@@ -300,6 +307,15 @@ function renderMemberList() {
 // ETA cache: avoids hammering OSRM on every position update (60s TTL).
 const _etaCache = new Map();
 
+// When the page is hidden (screen off, app in background), Socket.io keeps
+// pushing events but we don't need to spend CPU on UI rendering.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    // Came back to foreground — force a single refresh so the UI catches up
+    refreshPositions().catch(() => {});
+  }
+});
+
 // Throttle full list re-renders to at most once per second to avoid DOM
 // churn when many position updates arrive via Socket.io.
 let _renderMemberListPending = false;
@@ -332,14 +348,17 @@ function setupSOS() {
 
   const startHold = () => {
     btn.classList.add('holding');
+    Visual.tap();   // light tap when the hold starts
     holdTimer = setTimeout(async () => {
       btn.classList.remove('holding');
+      Visual.sos(); // heavy vibration when SOS actually fires
       const latlng = GeoModule.getCurrentLatLng();
       try {
         const body = latlng ? { latitude: latlng[0], longitude: latlng[1] } : {};
         await API.post('/api/notify/sos', body);
         showToast('🆘 SOS envoyé', 'Tous les membres ont été alertés', 'sos');
       } catch (err) {
+        Visual.error();
         showToast('Erreur SOS', err.message);
       }
     }, 3000);
@@ -379,13 +398,16 @@ function setupOkButton() {
 
   btn.addEventListener('click', async () => {
     if (cooldown) { showToast('⏳ Patientez', 'Signal déjà envoyé récemment'); return; }
+    Visual.tap();
     try {
       await API.post('/api/notify/ok', {});
+      Visual.success();
       showToast('✅ Signal envoyé', 'La famille a été notifiée', 'ok');
       btn.classList.add('sent');
       cooldown = true;
       setTimeout(() => { cooldown = false; btn.classList.remove('sent'); }, 30_000);
     } catch (err) {
+      Visual.error();
       showToast('Erreur', err.message);
     }
   });
@@ -537,6 +559,8 @@ function showShareModal(url, expiresIn) {
 }
 
 // ── GPS diagnostic widget (in profile panel) ──────────────────────────────────
+let _gpsDiagTimer = null;
+
 function setupGpsDiagnostic() {
   // Inject the diagnostic block at the top of the Profile panel if not already there
   const profileSheet = document.querySelector('#profileOverlay .panel-sheet');
@@ -557,8 +581,24 @@ function setupGpsDiagnostic() {
     await GeoModule.recalibrate();
     setTimeout(refreshGpsDiag, 1500);
   };
-  refreshGpsDiag();
-  setInterval(refreshGpsDiag, 5000);
+
+  // Only refresh while the profile panel is actually open — saves a tick/5s
+  // when the user isn't looking at it.
+  const overlay = document.getElementById('profileOverlay');
+  const startTimer = () => {
+    if (_gpsDiagTimer) return;
+    refreshGpsDiag();
+    _gpsDiagTimer = setInterval(refreshGpsDiag, 5000);
+  };
+  const stopTimer = () => {
+    if (_gpsDiagTimer) { clearInterval(_gpsDiagTimer); _gpsDiagTimer = null; }
+  };
+  // Observe panel open/close via attribute (hidden class added/removed)
+  new MutationObserver(() => {
+    overlay.classList.contains('hidden') ? stopTimer() : startTimer();
+  }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+  // Initial state
+  if (!overlay.classList.contains('hidden')) startTimer();
 }
 
 function refreshGpsDiag() {
@@ -1192,7 +1232,12 @@ function setupZones() {
 function renderZoneList() {
   const container = document.getElementById('zoneList');
   if (!zones.length) {
-    container.innerHTML = '<p class="text-muted">Aucune zone définie.</p>';
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">🚧</div>
+        <div class="empty-state-title">Aucune zone définie</div>
+        <div class="empty-state-body">Créez une zone (Maison, Travail…) en cliquant sur la carte ou en tapant une adresse ci-dessous.</div>
+      </div>`;
     return;
   }
   container.innerHTML = zones.map((z) => {
@@ -1347,7 +1392,15 @@ async function loadAudit() {
   const body = document.getElementById('auditBody');
   try {
     const events = await API.get('/api/admin/audit?limit=100');
-    if (!events.length) { body.innerHTML = '<p class="text-muted">Aucun événement.</p>'; return; }
+    if (!events.length) {
+      body.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">📜</div>
+          <div class="empty-state-title">Pas d'événement d'audit</div>
+          <div class="empty-state-body">Les actions admin (invitations, suppressions, changements de limites) s'afficheront ici.</div>
+        </div>`;
+      return;
+    }
     body.innerHTML = `
       <div style="max-height:55vh;overflow-y:auto">
       ${events.map((e) => `
@@ -1409,7 +1462,12 @@ function escapeHtml(s) {
 
 async function renderAdminPanel() {
   const container = document.getElementById('adminContent');
-  container.innerHTML = '<p class="text-muted" style="text-align:center;padding:1.5rem">Chargement…</p>';
+  // Skeleton placeholders while the admin data loads in parallel
+  container.innerHTML = `
+    <div class="skeleton skeleton-line" style="width:30%"></div>
+    <div class="skeleton-row"><div class="skeleton skeleton-avatar"></div><div class="skeleton-body"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div></div></div>
+    <div class="skeleton-row"><div class="skeleton skeleton-avatar"></div><div class="skeleton-body"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div></div></div>
+    <div class="skeleton-row"><div class="skeleton skeleton-avatar"></div><div class="skeleton-body"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div></div></div>`;
 
   try {
     const [stats, members, invitations, sosHistory, msgHistory, monthStats] = await Promise.all([
