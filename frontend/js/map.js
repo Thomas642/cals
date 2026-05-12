@@ -199,6 +199,13 @@ const MapModule = (() => {
         fillOpacity: .1,
       }).addTo(map);
       c.bindTooltip(z.name, { permanent: true, direction: 'center', className: 'zone-label' });
+      const addrLine = z.address ? `<div style="font-size:.75rem;color:var(--text-muted);margin:.3rem 0">📍 ${z.address}</div>` : '';
+      c.bindPopup(
+        `<strong>${z.name}</strong><div style="font-size:.78rem;color:var(--text-muted)">Zone · ${z.radius} m</div>${addrLine}
+         <button class="btn btn-primary btn-sm btn-full" style="margin-top:.4rem"
+           onclick="RoutingModule.openNavigation(${z.latitude},${z.longitude},'${(z.name || '').replace(/'/g, "\\'")}')">🧭 Y aller</button>`,
+        { maxWidth: 240 }
+      );
       zoneCircles.push(c);
     });
   }
@@ -231,8 +238,12 @@ const MapModule = (() => {
       : '';
     marker.bindPopup(
       `<strong>${emoji} ${place.name}</strong>${notesHtml}
-      <button class="btn btn-ghost btn-sm" style="margin-top:.4rem;margin-right:.3rem" onclick="window._editPlaceNotesCallback && window._editPlaceNotesCallback('${place.id}','${place.name}')">✏️ Notes</button>
-      <button class="btn btn-danger btn-sm" style="margin-top:.4rem" onclick="window._deletePlaceCallback && window._deletePlaceCallback('${place.id}')">Supprimer</button>`,
+      <button class="btn btn-primary btn-sm btn-full" style="margin-top:.4rem"
+        onclick="RoutingModule.openNavigation(${place.latitude},${place.longitude},'${(place.name || '').replace(/'/g, "\\'")}')">🧭 Y aller</button>
+      <div style="display:flex;gap:.3rem;margin-top:.4rem">
+        <button class="btn btn-ghost btn-sm" style="flex:1" onclick="window._editPlaceNotesCallback && window._editPlaceNotesCallback('${place.id}','${place.name}')">✏️</button>
+        <button class="btn btn-danger btn-sm" style="flex:1" onclick="window._deletePlaceCallback && window._deletePlaceCallback('${place.id}')">✕</button>
+      </div>`,
       { maxWidth: 220 }
     );
     placeMarkers[place.id] = marker;

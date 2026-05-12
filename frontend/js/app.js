@@ -69,6 +69,7 @@
     ['Navigation',    setupNavigation],
     ['Admin',         setupAdmin],
     ['Locate',        setupLocate],
+    ['Search',        setupSearch],
     ['Socket',        setupSocket],
     ['Install',       setupInstall],
     ['Chat',          setupChat],
@@ -249,17 +250,26 @@ function renderMemberList() {
       if (homeZone) {
         const distKm = haversineKm(m.latitude, m.longitude, homeZone.latitude, homeZone.longitude);
         if (distKm > 0.2) {
-          // Synchronous fallback estimate, refined async by OSRM
-          const etaMin = Math.max(1, Math.round((distKm / m.speed) * 60 * 1.4));
           const etaId = `eta-${m.id}`;
-          etaHtml = `<span id="${etaId}" style="color:var(--primary-l)">🏠 ~${etaMin} min</span>`;
-          // Async OSRM refinement
-          RoutingModule.computeRoute(m.latitude, m.longitude, homeZone.latitude, homeZone.longitude)
-            .then((r) => {
-              if (!r) return;
-              const el = document.getElementById(etaId);
-              if (el) el.textContent = `🏠 ${Math.max(1, Math.round(r.duration_s / 60))} min`;
-            });
+          // Cache lookup: bucket by ~100m position so we don't re-query OSRM
+          // on every minor position update
+          const cacheKey = `${m.id}|${homeZone.id}|${m.latitude.toFixed(3)},${m.longitude.toFixed(3)}`;
+          const cached = _etaCache.get(cacheKey);
+          if (cached && Date.now() - cached.at < 60_000) {
+            etaHtml = `<span style="color:var(--primary-l)">🏠 ${cached.min} min</span>`;
+          } else {
+            // Synchronous fallback estimate, refined async by OSRM
+            const etaMin = Math.max(1, Math.round((distKm / m.speed) * 60 * 1.4));
+            etaHtml = `<span id="${etaId}" style="color:var(--primary-l)">🏠 ~${etaMin} min</span>`;
+            RoutingModule.computeRoute(m.latitude, m.longitude, homeZone.latitude, homeZone.longitude)
+              .then((r) => {
+                if (!r) return;
+                const min = Math.max(1, Math.round(r.duration_s / 60));
+                _etaCache.set(cacheKey, { at: Date.now(), min });
+                const el = document.getElementById(etaId);
+                if (el) el.textContent = `🏠 ${min} min`;
+              });
+          }
         }
       }
     }
@@ -284,9 +294,32 @@ function renderMemberList() {
   });
 }
 
+// ETA cache: avoids hammering OSRM on every position update (60s TTL).
+const _etaCache = new Map();
+
+// Throttle full list re-renders to at most once per second to avoid DOM
+// churn when many position updates arrive via Socket.io.
+let _renderMemberListPending = false;
+let _renderMemberListLast = 0;
+function scheduleRenderMemberList() {
+  const now = Date.now();
+  const sinceLast = now - _renderMemberListLast;
+  if (sinceLast >= 1000) {
+    _renderMemberListLast = now;
+    renderMemberList();
+  } else if (!_renderMemberListPending) {
+    _renderMemberListPending = true;
+    setTimeout(() => {
+      _renderMemberListPending = false;
+      _renderMemberListLast = Date.now();
+      renderMemberList();
+    }, 1000 - sinceLast);
+  }
+}
+
 function updateMemberCard(m) {
   memberData[m.id] = { ...memberData[m.id], ...m };
-  renderMemberList();
+  scheduleRenderMemberList();
 }
 
 // ── SOS ───────────────────────────────────────────────────────────────────────
@@ -416,6 +449,13 @@ function setupPrivacy() {
     label.textContent = isPrivate ? 'Privé' : 'Partager';
     btn.style.color = isPrivate ? 'var(--warning)' : '';
     showToast(isPrivate ? '🔒 Mode privé activé' : '📡 Partage repris', '');
+  });
+}
+
+// ── Search destination ─────────────────────────────────────────────────────────
+function setupSearch() {
+  document.getElementById('searchBtn')?.addEventListener('click', () => {
+    if (typeof RoutingModule !== 'undefined') RoutingModule.openSearch();
   });
 }
 
