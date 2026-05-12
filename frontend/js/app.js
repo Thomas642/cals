@@ -50,7 +50,14 @@
       try { await loadPlaces(); } catch (e) { console.warn('[places]', e.message); }
     }
 
-    setInterval(refreshPositions, 10_000);
+    // Fallback polling : ne s'exécute QUE si Socket.io est déconnecté ET
+    // que l'onglet/app est au premier plan. Évite ~10 calls API/min inutiles
+    // quand le temps réel marche (cas normal).
+    setInterval(() => {
+      if (document.hidden) return;
+      if (socket?.connected) return;
+      refreshPositions().catch(() => {});
+    }, 10_000);
 
   } catch (e) {
     console.error('[bootstrap init]', e);
@@ -300,6 +307,15 @@ function renderMemberList() {
 // ETA cache: avoids hammering OSRM on every position update (60s TTL).
 const _etaCache = new Map();
 
+// When the page is hidden (screen off, app in background), Socket.io keeps
+// pushing events but we don't need to spend CPU on UI rendering.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    // Came back to foreground — force a single refresh so the UI catches up
+    refreshPositions().catch(() => {});
+  }
+});
+
 // Throttle full list re-renders to at most once per second to avoid DOM
 // churn when many position updates arrive via Socket.io.
 let _renderMemberListPending = false;
@@ -537,6 +553,8 @@ function showShareModal(url, expiresIn) {
 }
 
 // ── GPS diagnostic widget (in profile panel) ──────────────────────────────────
+let _gpsDiagTimer = null;
+
 function setupGpsDiagnostic() {
   // Inject the diagnostic block at the top of the Profile panel if not already there
   const profileSheet = document.querySelector('#profileOverlay .panel-sheet');
@@ -557,8 +575,24 @@ function setupGpsDiagnostic() {
     await GeoModule.recalibrate();
     setTimeout(refreshGpsDiag, 1500);
   };
-  refreshGpsDiag();
-  setInterval(refreshGpsDiag, 5000);
+
+  // Only refresh while the profile panel is actually open — saves a tick/5s
+  // when the user isn't looking at it.
+  const overlay = document.getElementById('profileOverlay');
+  const startTimer = () => {
+    if (_gpsDiagTimer) return;
+    refreshGpsDiag();
+    _gpsDiagTimer = setInterval(refreshGpsDiag, 5000);
+  };
+  const stopTimer = () => {
+    if (_gpsDiagTimer) { clearInterval(_gpsDiagTimer); _gpsDiagTimer = null; }
+  };
+  // Observe panel open/close via attribute (hidden class added/removed)
+  new MutationObserver(() => {
+    overlay.classList.contains('hidden') ? stopTimer() : startTimer();
+  }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+  // Initial state
+  if (!overlay.classList.contains('hidden')) startTimer();
 }
 
 function refreshGpsDiag() {
