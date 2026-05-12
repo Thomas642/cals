@@ -300,6 +300,21 @@ html, body {
 }
 .update-banner-close:hover { color: #fff; }
 
+/* Admin tools (Health / Audit / Limits) */
+.tools-tab.active { background: var(--primary, #3b82f6) !important; color: #fff; }
+.health-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: .5rem;
+}
+.health-card {
+  background: var(--surface2);
+  border-radius: 8px;
+  padding: .55rem .7rem;
+  font-size: .82rem;
+  line-height: 1.4;
+}
+.health-card .text-muted { font-size: .72rem; }
+
 /* Hide button text labels on narrow screens — keep icons only */
 @media (max-width: 639px) {
   .topbar-actions .btn-label { display: none; }

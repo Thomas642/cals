@@ -42,6 +42,22 @@ router.post('/', authenticate, async (req, res) => {
         if (!text?.trim()) return res.status(400).json({ error: 'text required' });
         const trimmed = text.trim().slice(0, 1000);
 
+        // Per-user daily rate limit (NULL = unlimited)
+        const { rows: [limitRow] } = await pool.query(
+            'SELECT rate_limit_messages_day FROM users WHERE id = $1',
+            [req.user.id]
+        );
+        if (limitRow?.rate_limit_messages_day) {
+            const { rows: [{ n }] } = await pool.query(
+                `SELECT COUNT(*)::int AS n FROM messages
+                  WHERE user_id = $1 AND sent_at > NOW() - INTERVAL '24 hours'`,
+                [req.user.id]
+            );
+            if (n >= limitRow.rate_limit_messages_day) {
+                return res.status(429).json({ error: `Daily message limit reached (${limitRow.rate_limit_messages_day}/jour)` });
+            }
+        }
+
         const { rows } = await pool.query(
             `INSERT INTO messages (user_id, text) VALUES ($1, $2)
              RETURNING id, text, sent_at`,

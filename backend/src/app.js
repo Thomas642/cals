@@ -23,6 +23,7 @@ const scheduleRoutes = require('./routes/schedule');
 const { startWatchdog } = require('./services/watchdog');
 const placesRoutes = require('./routes/places');
 const routingRoutes = require('./routes/routing');
+const adminRoutes   = require('./routes/admin');
 
 // ── Web Push setup ───────────────────────────────────────────────────────────
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
@@ -141,6 +142,7 @@ app.use('/api/share',    apiLimiter, shareRoutes);
 app.use('/api/places',   apiLimiter, placesRoutes);
 app.use('/api/schedule', apiLimiter, scheduleRoutes);
 app.use('/api/routing',  apiLimiter, routingRoutes);
+app.use('/api/admin',    apiLimiter, adminRoutes);
 
 // VAPID public key (needed by the frontend to subscribe to push)
 app.get('/api/push-key', (_, res) => {
@@ -319,6 +321,25 @@ async function runMigrations() {
     await pool.query(`
         CREATE INDEX IF NOT EXISTS schedule_alerts_member_active_idx
             ON schedule_alerts(member_id, active)
+    `);
+
+    // Per-user rate limits (NULL = no limit / use defaults)
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS rate_limit_positions_day INT`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS rate_limit_messages_day  INT`);
+
+    // Admin audit log
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            actor_id   UUID REFERENCES users(id) ON DELETE SET NULL,
+            action     VARCHAR(50) NOT NULL,
+            target_id  UUID REFERENCES users(id) ON DELETE SET NULL,
+            details    JSONB NOT NULL DEFAULT '{}',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    `);
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS audit_log_created_idx ON audit_log(created_at DESC)
     `);
 }
 

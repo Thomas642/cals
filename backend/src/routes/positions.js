@@ -16,6 +16,22 @@ router.post('/', authenticate, async (req, res) => {
         return res.status(400).json({ error: 'Invalid coordinates' });
     }
 
+    // Per-user daily rate limit (NULL = unlimited)
+    const { rows: [limitRow] } = await pool.query(
+        'SELECT rate_limit_positions_day FROM users WHERE id = $1',
+        [req.user.id]
+    );
+    if (limitRow?.rate_limit_positions_day) {
+        const { rows: [{ n }] } = await pool.query(
+            `SELECT COUNT(*)::int AS n FROM positions
+              WHERE user_id = $1 AND recorded_at > NOW() - INTERVAL '24 hours'`,
+            [req.user.id]
+        );
+        if (n >= limitRow.rate_limit_positions_day) {
+            return res.status(429).json({ error: `Daily position limit reached (${limitRow.rate_limit_positions_day}/jour)` });
+        }
+    }
+
     const point = `POINT(${longitude} ${latitude})`;
 
     const { rows } = await pool.query(
