@@ -61,6 +61,13 @@
 </div>
 
 <script>
+  // Guest auto-login: ?auto_token=JWT → store and redirect immediately
+  const autoToken = new URLSearchParams(location.search).get('auto_token');
+  if (autoToken) {
+    localStorage.setItem('ft_token', autoToken);
+    location.href = '/';
+  }
+
   // Pre-fill token from URL ?token=...
   const urlToken = new URLSearchParams(location.search).get('token');
   if (urlToken) {

@@ -240,6 +240,136 @@ router.get('/timeline', authenticate, async (req, res) => {
     }
 });
 
+// GET /api/history/heatmap — sampled positions for all members (last 30 days)
+router.get('/heatmap', authenticate, async (req, res) => {
+    try {
+        const { days = 30 } = req.query;
+        const limit = 2000;
+        const { rows } = await pool.query(
+            `SELECT ST_Y(location::geometry) AS lat, ST_X(location::geometry) AS lng, speed
+             FROM (
+                 SELECT location, speed,
+                        ROW_NUMBER() OVER (ORDER BY RANDOM()) AS rn,
+                        COUNT(*) OVER () AS total
+                 FROM positions
+                 WHERE recorded_at >= NOW() - ($1 || ' days')::INTERVAL
+             ) s
+             WHERE rn <= $2`,
+            [parseInt(days) || 30, limit]
+        );
+        // Return [lat, lng, intensity] — intensity based on speed (faster = hotter)
+        const points = rows.map(r => [
+            parseFloat(r.lat),
+            parseFloat(r.lng),
+            Math.min(1, (r.speed || 0) / 130),
+        ]);
+        res.json(points);
+    } catch (err) {
+        console.error('[history/heatmap]', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET /api/history/routines — detect recurring trips over the last 60 days
+router.get('/routines', authenticate, async (req, res) => {
+    try {
+        const { userId } = req.query;
+        const targetId = userId || req.user.id;
+
+        // Fetch all trips for the member over 60 days
+        const { rows: pts } = await pool.query(
+            `SELECT ST_Y(location::geometry) AS latitude, ST_X(location::geometry) AS longitude,
+                    speed, recorded_at
+             FROM positions
+             WHERE user_id = $1 AND recorded_at >= NOW() - INTERVAL '60 days'
+             ORDER BY recorded_at ASC`,
+            [targetId]
+        );
+
+        if (pts.length < 10) return res.json([]);
+
+        // Split into trips (10-min gap)
+        const GAP_MS = 10 * 60_000;
+        const MIN_DIST_KM = 0.5;
+        const trips = [];
+        let current = { points: [pts[0]], started_at: pts[0].recorded_at };
+
+        for (let i = 1; i < pts.length; i++) {
+            const gap = new Date(pts[i].recorded_at) - new Date(pts[i - 1].recorded_at);
+            if (gap > GAP_MS) {
+                const s = summariseTrip(current);
+                if (s.distance_km >= MIN_DIST_KM) trips.push(s);
+                current = { points: [pts[i]], started_at: pts[i].recorded_at };
+            } else {
+                current.points.push(pts[i]);
+            }
+        }
+        const lastTrip = summariseTrip(current);
+        if (lastTrip.distance_km >= MIN_DIST_KM) trips.push(lastTrip);
+
+        // Simple clustering: group trips by start+end grid cell (0.01° ≈ 1 km)
+        const CELL = 0.01;
+        const clusters = new Map();
+
+        for (const trip of trips) {
+            const first = trip.points[0];
+            const last  = trip.points[trip.points.length - 1];
+            const startCell = `${Math.round(first.latitude / CELL)}_${Math.round(first.longitude / CELL)}`;
+            const endCell   = `${Math.round(last.latitude / CELL)}_${Math.round(last.longitude / CELL)}`;
+            const key = `${startCell}->${endCell}`;
+
+            if (!clusters.has(key)) {
+                clusters.set(key, {
+                    key,
+                    start_lat: first.latitude,
+                    start_lon: first.longitude,
+                    end_lat: last.latitude,
+                    end_lon: last.longitude,
+                    trips: [],
+                });
+            }
+            clusters.get(key).trips.push({
+                started_at:    trip.started_at,
+                ended_at:      trip.ended_at,
+                distance_km:   trip.distance_km,
+                avg_speed_kmh: trip.avg_speed_kmh,
+            });
+        }
+
+        // Keep clusters with ≥ 3 occurrences, compute departure time distribution
+        const routines = [];
+        for (const cluster of clusters.values()) {
+            if (cluster.trips.length < 3) continue;
+
+            const hours = cluster.trips.map(t => new Date(t.started_at).getHours() + new Date(t.started_at).getMinutes() / 60);
+            const avgHour = hours.reduce((a, b) => a + b, 0) / hours.length;
+            const h = Math.floor(avgHour);
+            const m = Math.round((avgHour - h) * 60);
+
+            const avgDist = cluster.trips.reduce((a, t) => a + t.distance_km, 0) / cluster.trips.length;
+            const avgSpeed = cluster.trips.reduce((a, t) => a + t.avg_speed_kmh, 0) / cluster.trips.length;
+
+            routines.push({
+                start_lat:       cluster.start_lat,
+                start_lon:       cluster.start_lon,
+                end_lat:         cluster.end_lat,
+                end_lon:         cluster.end_lon,
+                count:           cluster.trips.length,
+                avg_hour:        `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
+                avg_distance_km: Math.round(avgDist * 10) / 10,
+                avg_speed_kmh:   Math.round(avgSpeed),
+                trips:           cluster.trips,
+            });
+        }
+
+        routines.sort((a, b) => b.count - a.count);
+        res.json(routines);
+    } catch (err) {
+        console.error('[history/routines]', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // GET /api/history/raw — raw points for a time range (used by GPX export)
 router.get('/raw', authenticate, async (req, res) => {
     const { userId, from, to } = req.query;

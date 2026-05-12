@@ -23,6 +23,14 @@ const GeoModule = (() => {
   let drivingStopTimer     = null;
   let preDrivingIntervalSec = null;
 
+  // Crash detection
+  let crashDetectionEnabled = false;
+  let crashSpikeAt          = null;
+  let crashMotionHandler    = null;
+  const CRASH_SPIKE_MS2     = 25;  // m/s² net acceleration threshold
+  const CRASH_STILL_MS2     = 2;   // m/s² — device is still after crash
+  const CRASH_WINDOW_MS     = 5000; // 5s to detect stillness after spike
+
   // Battery saver
   let batterySaverActive    = false;
   const BATTERY_SAVER_ON    = 0.20; // < 20%
@@ -218,11 +226,54 @@ const GeoModule = (() => {
     return Math.round(lastPosition.coords.speed * 3.6);
   }
 
+  // ── Crash detection ──────────────────────────────────────────────────────────
+  function enableCrashDetection(enabled) {
+    crashDetectionEnabled = enabled;
+    if (!enabled) {
+      if (crashMotionHandler) {
+        window.removeEventListener('devicemotion', crashMotionHandler);
+        crashMotionHandler = null;
+      }
+      crashSpikeAt = null;
+      return;
+    }
+
+    if (!window.DeviceMotionEvent) {
+      console.warn('[Crash] DeviceMotionEvent not supported');
+      return;
+    }
+
+    crashMotionHandler = (e) => {
+      const a = e.accelerationIncludingGravity;
+      if (!a) return;
+      const net = Math.sqrt((a.x || 0) ** 2 + (a.y || 0) ** 2 + (a.z || 0) ** 2);
+
+      if (!crashSpikeAt && net > CRASH_SPIKE_MS2) {
+        crashSpikeAt = Date.now();
+        console.log('[Crash] Spike detected:', net.toFixed(1), 'm/s²');
+        return;
+      }
+
+      if (crashSpikeAt) {
+        const elapsed = Date.now() - crashSpikeAt;
+        if (elapsed <= CRASH_WINDOW_MS && net < CRASH_STILL_MS2) {
+          crashSpikeAt = null;
+          console.log('[Crash] Stillness after spike → crash-warning');
+          document.dispatchEvent(new CustomEvent('crash-warning'));
+        } else if (elapsed > CRASH_WINDOW_MS) {
+          crashSpikeAt = null; // window expired, reset
+        }
+      }
+    };
+
+    window.addEventListener('devicemotion', crashMotionHandler);
+  }
+
   return {
     start, stop, setPrivate,
     setInterval: setInterval_,
     getCurrentLatLng, getCurrentSpeed,
-    setSpeedAlert,
+    setSpeedAlert, enableCrashDetection,
     isWakeLockActive, isDriving,
   };
 })();

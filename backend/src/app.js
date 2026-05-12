@@ -230,6 +230,9 @@ async function runMigrations() {
         )
     `);
 
+    // Guest users expiry column
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS guest_expires_at TIMESTAMPTZ`);
+
     // Schedule alerts (planning + alertes horaires)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS schedule_alerts (

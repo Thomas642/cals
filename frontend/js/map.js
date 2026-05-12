@@ -5,6 +5,7 @@ const MapModule = (() => {
   let placeMarkers = {};
   let onLongPressCallback = null;
   let tileLayer = null;
+  let heatLayer = null;
   let currentTheme = localStorage.getItem('ft_map_theme') || 'dark';
 
   const TILES = {
@@ -239,6 +240,27 @@ const MapModule = (() => {
     }
   }
 
+  // ── Heatmap ─────────────────────────────────────────────────────────────────
+  function showHeatmap(points) {
+    hideHeatmap();
+    if (!window.L || !L.heatLayer) {
+      console.warn('[Map] Leaflet.heat not loaded');
+      return;
+    }
+    heatLayer = L.heatLayer(points, {
+      radius: 20,
+      blur: 25,
+      maxZoom: 17,
+      gradient: { 0.2: '#3b82f6', 0.5: '#f59e0b', 0.8: '#ef4444' },
+    }).addTo(map);
+  }
+
+  function hideHeatmap() {
+    if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
+  }
+
+  function isHeatmapVisible() { return heatLayer !== null; }
+
   function setTheme(theme) {
     if (!TILES[theme]) return;
     currentTheme = theme;
@@ -259,6 +281,7 @@ const MapModule = (() => {
     renderZones, setPickingZone, getMap,
     setOnLongPress, renderPlaces, addPlace, removePlace,
     setTheme, getTheme,
+    showHeatmap, hideHeatmap, isHeatmapVisible,
   };
 })();
 

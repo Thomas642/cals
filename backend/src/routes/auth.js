@@ -116,6 +116,35 @@ router.post('/invite', authenticate, async (req, res) => {
     res.status(201).json({ token, url: `/register?token=${token}` });
 });
 
+// POST /api/auth/guest-invite — admin creates a temporary guest access link (no password required)
+router.post('/guest-invite', authenticate, async (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+
+    try {
+        const { name, duration_hours = 24 } = req.body;
+        if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
+
+        const colors     = ['#EF4444','#F97316','#22C55E','#3B82F6','#8B5CF6','#EC4899'];
+        const color      = colors[Math.floor(Math.random() * colors.length)];
+        const expiresAt  = new Date(Date.now() + Math.min(parseInt(duration_hours) || 24, 168) * 3_600_000);
+
+        const { rows } = await pool.query(
+            `INSERT INTO users (name, email, password_hash, color, role, guest_expires_at, is_active)
+             VALUES ($1, $2, '$invalid$', $3, 'guest', $4, TRUE) RETURNING id`,
+            [name.trim(), `guest_${Date.now()}@temp.local`, color, expiresAt]
+        );
+
+        const guestToken = signToken(rows[0].id);
+        const origin     = req.headers.origin || `${req.protocol}://${req.headers.host}`;
+        const url        = `${origin}/login.html?auto_token=${guestToken}`;
+
+        res.status(201).json({ token: guestToken, url, expires_at: expiresAt, name: name.trim() });
+    } catch (err) {
+        console.error('[guest-invite]', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // GET /api/auth/invitations  — admin: list pending invitations
 router.get('/invitations', authenticate, async (req, res) => {
     if (req.user.role !== 'admin') {

@@ -940,6 +940,45 @@ hr[style*="border-color:var(--border)"] { opacity: .6; }
 .month-stats-row { border-bottom: 1px solid var(--border); }
 .month-stats-row:last-child { border-bottom: none; }
 
+/* ─── Crash warning overlay ─────────────────────────────────────────────────── */
+.crash-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(244, 63, 94, .92);
+  display: flex; align-items: center; justify-content: center;
+  padding: 1.5rem;
+}
+.crash-overlay.hidden { display: none; }
+.crash-card {
+  background: #1a0a0e; border-radius: var(--radius-xl);
+  padding: 2rem 1.5rem; text-align: center; max-width: 360px; width: 100%;
+  box-shadow: 0 0 60px rgba(244,63,94,.8);
+}
+.crash-icon { font-size: 3.5rem; margin-bottom: .5rem; animation: crash-pulse 1s infinite; }
+@keyframes crash-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.15); } }
+.crash-title { font-size: 1.4rem; font-weight: 800; color: #fff; margin-bottom: .4rem; }
+.crash-subtitle { font-size: .85rem; color: rgba(255,255,255,.8); margin-bottom: 1rem; }
+.crash-countdown {
+  font-size: 4rem; font-weight: 900; color: #fff; line-height: 1;
+  margin-bottom: 1.25rem; font-variant-numeric: tabular-nums;
+}
+
+/* ─── Routine cards ──────────────────────────────────────────────────────────── */
+.routine-card {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: .75rem 1rem; margin-bottom: .5rem;
+  display: flex; gap: .75rem; align-items: flex-start;
+}
+.routine-header { display: flex; flex-direction: column; align-items: center; gap: .2rem; flex-shrink: 0; }
+.routine-rank { font-size: 1rem; font-weight: 800; color: var(--primary-l); }
+.routine-count {
+  background: rgba(99,102,241,.15); color: var(--primary-l);
+  font-size: .72rem; font-weight: 700; border-radius: 999px;
+  padding: .1rem .4rem; white-space: nowrap;
+}
+.routine-info { flex: 1; }
+.routine-time { font-size: .84rem; font-weight: 600; color: var(--text-2); margin-bottom: .2rem; }
+.routine-dist { font-size: .78rem; color: var(--text-muted); }
+
 /* ─── Responsive ────────────────────────────────────────────────────────────── */
 @media (min-width: 640px) {
   #sidebar { width: 360px; }

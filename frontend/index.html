@@ -20,6 +20,9 @@
   <link rel="stylesheet" href="/vendor/leaflet.css">
   <script src="/vendor/leaflet.js"></script>
 
+  <!-- Leaflet.heat for heatmap layer -->
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+
   <!-- Socket.io — fallback no-op si le script ne charge pas -->
   <script src="/socket.io/socket.io.js"></script>
   <script>window.io = window.io || function() { return { on: function(){}, emit: function(){}, disconnect: function(){} }; };</script>
@@ -40,6 +43,9 @@
       <span id="drivingBadge" class="driving-badge hidden" title="Mode conduite actif">🚗</span>
     </div>
     <div class="topbar-actions">
+      <button id="btnHeatmap" class="btn btn-ghost btn-sm btn-icon" title="Heatmap des déplacements">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M17 12h-5v5h5v-5zM16 1v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-1V1h-2zm3 18H5V8h14v11z"/></svg>
+      </button>
       <button id="btnMapTheme" class="btn btn-ghost btn-sm btn-icon" title="Changer le thème de la carte">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/></svg>
       </button>
@@ -193,9 +199,11 @@
       <button class="shortcut-btn" data-shortcut="week">7 jours</button>
       <button class="shortcut-btn" data-shortcut="timeline">📅 Timeline</button>
       <button class="shortcut-btn" data-shortcut="stats">📊 Stats</button>
+      <button class="shortcut-btn" data-shortcut="routines">🔄 Routines</button>
     </div>
     <div id="weekStatsContainer" class="hidden"></div>
     <div id="timelineContainer" class="hidden"></div>
+    <div id="routinesContainer" class="hidden"></div>
     <div style="display:flex;gap:.5rem;margin-bottom:.75rem">
       <div class="form-group" style="flex:1;margin-bottom:0">
         <label>Du</label>
@@ -353,6 +361,18 @@
       </div>
       <div id="sosPassiveStatus" class="hidden" style="font-size:.78rem;color:var(--success);margin-top:.4rem">✓ Actif — retournez le téléphone face vers le bas pour déclencher</div>
     </div>
+    <div class="form-group">
+      <div class="sos-passive-row">
+        <div>
+          <div style="font-size:.84rem;font-weight:600;color:var(--text-2)">Détection choc / accident</div>
+          <small class="text-muted">Spike accéléromètre → fenêtre de 30s → SOS auto</small>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="crashDetectionToggle">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
     <hr style="border-color:var(--border);margin:1rem 0">
     <div class="panel-title" style="font-size:.95rem">🔗 Partage temporaire</div>
     <p class="text-muted" style="font-size:.82rem;margin-bottom:.75rem">Génère un lien de suivi en direct (24h) pour quelqu'un sans compte.</p>
@@ -447,6 +467,17 @@
       </button>
       <button class="btn btn-ghost" id="sosAlertClose">Fermer</button>
     </div>
+  </div>
+</div>
+
+<!-- Crash warning overlay -->
+<div id="crashWarningOverlay" class="crash-overlay hidden">
+  <div class="crash-card">
+    <div class="crash-icon">🚨</div>
+    <h2 class="crash-title">Accident détecté ?</h2>
+    <p class="crash-subtitle">Un choc a été détecté. Le SOS sera envoyé automatiquement dans&nbsp;:</p>
+    <div class="crash-countdown" id="crashCountdown">30</div>
+    <button class="btn btn-success btn-full" id="crashCancelBtn">✅ Je vais bien — Annuler</button>
   </div>
 </div>
 
