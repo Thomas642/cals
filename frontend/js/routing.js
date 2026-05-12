@@ -66,12 +66,17 @@ const RoutingModule = (() => {
       <div style="background:var(--surface,#0f1629);border:1px solid var(--border);border-radius:14px;padding:1.2rem 1.4rem;width:90%;max-width:340px;color:var(--text,#e2e8f0)">
         <h3 style="margin:0 0 .6rem 0;font-size:1rem">Démarrer un trajet</h3>
         ${label ? `<p style="margin:0 0 1rem 0;font-size:.85rem;color:var(--text-muted)">${label}</p>` : ''}
-        <button class="btn btn-primary btn-full" id="navPickWaze">🧭 Ouvrir dans Waze</button>
+        <button class="btn btn-primary btn-full" id="navPickInApp">📍 Naviguer dans l'app</button>
+        <button class="btn btn-ghost btn-full mt-1" id="navPickWaze">🧭 Ouvrir dans Waze</button>
         <button class="btn btn-ghost btn-full mt-1" id="navPickMaps">🗺️ Ouvrir dans Google Maps</button>
         <button class="btn btn-ghost btn-full mt-1" id="navPickCancel">Annuler</button>
       </div>`;
     document.body.appendChild(overlay);
 
+    document.getElementById('navPickInApp').onclick = () => {
+      if (window.NavigationModule) NavigationModule.start(lat, lng, label);
+      overlay.remove();
+    };
     document.getElementById('navPickWaze').onclick = () => { openInWaze(lat, lng); overlay.remove(); };
     document.getElementById('navPickMaps').onclick = () => { openInGoogleMaps(lat, lng); overlay.remove(); };
     document.getElementById('navPickCancel').onclick = () => overlay.remove();

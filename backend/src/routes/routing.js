@@ -29,16 +29,16 @@ function cacheSet(key, data) {
 }
 
 // ── POST /api/routing/route ─────────────────────────────────────────────────
-// Body: { from: {lat, lng}, to: {lat, lng}, alternatives?: bool }
-// Returns: { distance_m, duration_s, geometry, alternatives: [...] }
+// Body: { from: {lat, lng}, to: {lat, lng}, alternatives?: bool, steps?: bool }
+// Returns: { distance_m, duration_s, geometry, steps?: [...], alternatives: [...] }
 router.post('/route', authenticate, async (req, res) => {
-    const { from, to, alternatives } = req.body || {};
+    const { from, to, alternatives, steps } = req.body || {};
     if (!from || !to || from.lat == null || from.lng == null || to.lat == null || to.lng == null) {
         return res.status(400).json({ error: 'from and to (with lat & lng) required' });
     }
 
     const coords = `${from.lng},${from.lat};${to.lng},${to.lat}`;
-    const url = `${OSRM_URL}/route/v1/driving/${coords}?overview=full&geometries=geojson&alternatives=${alternatives ? 'true' : 'false'}&steps=false`;
+    const url = `${OSRM_URL}/route/v1/driving/${coords}?overview=full&geometries=geojson&alternatives=${alternatives ? 'true' : 'false'}&steps=${steps ? 'true' : 'false'}`;
 
     try {
         const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
@@ -50,19 +50,38 @@ router.post('/route', authenticate, async (req, res) => {
             return res.status(404).json({ error: 'No route found' });
         }
 
-        const main = data.routes[0];
-        const alts = data.routes.slice(1).map((r) => ({
-            distance_m: Math.round(r.distance),
-            duration_s: Math.round(r.duration),
-            geometry: r.geometry,
-        }));
+        const mapRoute = (route) => {
+            const out = {
+                distance_m: Math.round(route.distance),
+                duration_s: Math.round(route.duration),
+                geometry: route.geometry,
+            };
+            if (steps) {
+                // Flatten all leg steps into a single array (we only request a single leg anyway)
+                out.steps = (route.legs || []).flatMap((leg) =>
+                    (leg.steps || []).map((s) => ({
+                        distance_m: Math.round(s.distance),
+                        duration_s: Math.round(s.duration),
+                        name: s.name || '',
+                        ref: s.ref || '',
+                        maneuver: {
+                            type: s.maneuver?.type || '',
+                            modifier: s.maneuver?.modifier || '',
+                            location: s.maneuver?.location || null,
+                            exit: s.maneuver?.exit || null,
+                            bearing_after: s.maneuver?.bearing_after,
+                        },
+                        geometry: s.geometry,
+                    }))
+                );
+            }
+            return out;
+        };
 
-        res.json({
-            distance_m: Math.round(main.distance),
-            duration_s: Math.round(main.duration),
-            geometry: main.geometry,
-            alternatives: alts,
-        });
+        const main = mapRoute(data.routes[0]);
+        const alts = data.routes.slice(1).map(mapRoute);
+
+        res.json({ ...main, alternatives: alts });
     } catch (err) {
         console.warn('[routing] OSRM error:', err.message);
         res.status(503).json({ error: 'Routing service unavailable' });
