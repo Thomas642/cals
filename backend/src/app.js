@@ -100,9 +100,9 @@ const authLimiter = rateLimit({
     message: { error: 'Trop de tentatives, réessayez dans quelques minutes.' },
 });
 
-// ── Static uploads ───────────────────────────────────────────────────────────
+// ── Static uploads (served under /api/uploads so nginx proxy covers it) ──────
 const uploadDir = path.resolve(process.env.UPLOAD_DIR || '../uploads');
-app.use('/uploads', express.static(uploadDir));
+app.use('/api/uploads', express.static(uploadDir));
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/auth', authLimiter, authRoutes);
@@ -154,6 +154,32 @@ async function runMigrations() {
             created_by UUID REFERENCES users(id) ON DELETE SET NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
+    `);
+
+    // Ensure notifications_log exists with the full type set
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS notifications_log (
+            id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            type         VARCHAR(20) NOT NULL,
+            triggered_by UUID        REFERENCES users(id) ON DELETE SET NULL,
+            sent_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            payload      JSONB       NOT NULL DEFAULT '{}'
+        )
+    `);
+    // Drop old restrictive CHECK constraint if present, then add the full one
+    await pool.query(`
+        ALTER TABLE notifications_log
+            DROP CONSTRAINT IF EXISTS notifications_log_type_check
+    `);
+    await pool.query(`
+        ALTER TABLE notifications_log
+            ADD CONSTRAINT notifications_log_type_check
+            CHECK (type IN ('sos','ok_signal','quick_message','speed_alert',
+                            'geofence_enter','geofence_exit','battery','disconnect'))
+    `);
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS notifications_log_sent_at_idx
+            ON notifications_log(sent_at DESC)
     `);
 }
 

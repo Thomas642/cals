@@ -102,7 +102,7 @@ router.post('/:id/avatar', authenticate, upload.single('avatar'), async (req, re
     }
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const avatarUrl = `/uploads/${req.file.filename}`;
+    const avatarUrl = `/api/uploads/${req.file.filename}`;
     await pool.query('UPDATE users SET avatar_url = $1 WHERE id = $2', [avatarUrl, req.params.id]);
     res.json({ avatar_url: avatarUrl });
 });

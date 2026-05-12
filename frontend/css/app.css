@@ -469,6 +469,37 @@ html, body {
   font-family: var(--font-mono); margin-top: .5rem;
 }
 
+/* ─── Admin enhancements ────────────────────────────────────────────────────── */
+.admin-role-badge {
+  display: inline-block; padding: 1px 7px; border-radius: 10px;
+  font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+  vertical-align: middle; margin-left: .35rem;
+}
+.admin-role-admin  { background: rgba(99,102,241,.2); color: var(--primary-l); border: 1px solid rgba(99,102,241,.3); }
+.admin-role-member { background: rgba(99,102,241,.06); color: var(--text-muted); border: 1px solid var(--border); }
+
+.admin-event-row {
+  display: flex; align-items: center; gap: .75rem;
+  padding: .55rem 0; border-bottom: 1px solid var(--border);
+}
+.admin-event-row:last-child { border: none; }
+.admin-event-icon { font-size: 1.25rem; flex-shrink: 0; width: 28px; text-align: center; }
+
+.admin-distance-row { margin-bottom: .6rem; }
+.admin-dist-label {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: .8rem; font-weight: 600; margin-bottom: .3rem;
+}
+.admin-dist-val { color: var(--primary-l); font-weight: 700; }
+.admin-dist-bar-outer {
+  height: 5px; background: var(--surface3); border-radius: 3px; overflow: hidden;
+}
+.admin-dist-bar-inner {
+  height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, var(--primary), var(--accent));
+  transition: width .5s cubic-bezier(.4,0,.2,1);
+}
+
 /* ─── History panel ─────────────────────────────────────────────────────────── */
 .history-shortcuts { display: flex; gap: .4rem; margin-bottom: .75rem; }
 .shortcut-btn {
