@@ -62,6 +62,8 @@ const MapModule = (() => {
     document.getElementById('zoneLat').value = lat.toFixed(6);
     document.getElementById('zoneLon').value = lng.toFixed(6);
     showToast('📍 Position sélectionnée', `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+    // Reverse-geocode to fill the address field (best-effort)
+    if (window.reverseGeocodeForZone) window.reverseGeocodeForZone(lat, lng);
   }
 
   function setPickingZone(val) {

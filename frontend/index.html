@@ -263,6 +263,13 @@
       <label>Nom</label>
       <input type="text" id="zoneName" placeholder="ex : Maison">
     </div>
+    <div class="form-group">
+      <label>Adresse <span class="text-muted" style="font-size:.78rem">(remplie automatiquement)</span></label>
+      <div style="position:relative">
+        <input type="text" id="zoneAddress" placeholder="Tapez une adresse pour rechercher…" autocomplete="off">
+        <div id="zoneAddressResults" class="address-results hidden"></div>
+      </div>
+    </div>
     <div style="display:flex;gap:.5rem">
       <div class="form-group" style="flex:1">
         <label>Latitude</label>
@@ -277,7 +284,7 @@
       <label>Rayon (mètres)</label>
       <input type="number" id="zoneRadius" value="200" min="50">
     </div>
-    <p class="text-muted mt-1">💡 Cliquez sur la carte pour positionner la zone</p>
+    <p class="text-muted mt-1">💡 Cliquez sur la carte pour positionner la zone, ou tapez une adresse</p>
     <button class="btn btn-primary btn-full mt-2" id="createZone">Créer la zone</button>
     <hr style="border-color:var(--border);margin:1rem 0">
     <div class="panel-title" style="font-size:.95rem">⏰ Planning & alertes horaires</div>
@@ -564,11 +571,12 @@
 <!-- Toast container -->
 <div id="toastContainer"></div>
 
-<script src="/js/api.js?v=5"></script>
-<script src="/js/auth.js?v=5"></script>
-<script src="/js/map.js?v=5"></script>
-<script src="/js/geolocation.js?v=5"></script>
-<script src="/js/notifications.js?v=5"></script>
-<script src="/js/app.js?v=5"></script>
+<script src="/js/api.js?v=6"></script>
+<script src="/js/auth.js?v=6"></script>
+<script src="/js/map.js?v=6"></script>
+<script src="/js/geolocation.js?v=6"></script>
+<script src="/js/notifications.js?v=6"></script>
+<script src="/js/routing.js?v=6"></script>
+<script src="/js/app.js?v=6"></script>
 </body>
 </html>

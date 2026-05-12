@@ -8,7 +8,7 @@ const router = express.Router();
 router.get('/', authenticate, async (req, res) => {
     const { rows } = await pool.query(
         `SELECT
-            id, name, radius,
+            id, name, radius, address,
             ST_Y(center::geometry) AS latitude,
             ST_X(center::geometry) AS longitude,
             created_by, notify_members, is_active, created_at
@@ -20,7 +20,7 @@ router.get('/', authenticate, async (req, res) => {
 
 // POST /api/zones
 router.post('/', authenticate, async (req, res) => {
-    const { name, latitude, longitude, radius, notify_members } = req.body;
+    const { name, latitude, longitude, radius, notify_members, address } = req.body;
     if (!name || latitude == null || longitude == null || !radius) {
         return res.status(400).json({ error: 'name, latitude, longitude and radius are required' });
     }
@@ -29,19 +29,19 @@ router.post('/', authenticate, async (req, res) => {
     const members = Array.isArray(notify_members) ? notify_members : [];
 
     const { rows } = await pool.query(
-        `INSERT INTO zones (name, center, radius, created_by, notify_members)
-         VALUES ($1, ST_GeogFromText($2), $3, $4, $5)
-         RETURNING id, name, radius, created_at,
+        `INSERT INTO zones (name, center, radius, created_by, notify_members, address)
+         VALUES ($1, ST_GeogFromText($2), $3, $4, $5, $6)
+         RETURNING id, name, radius, address, created_at,
                    ST_Y(center::geometry) AS latitude,
                    ST_X(center::geometry) AS longitude`,
-        [name.trim(), point, radius, req.user.id, members]
+        [name.trim(), point, radius, req.user.id, members, (address || '').toString().slice(0, 500)]
     );
     res.status(201).json(rows[0]);
 });
 
 // PUT /api/zones/:id
 router.put('/:id', authenticate, async (req, res) => {
-    const { name, latitude, longitude, radius, notify_members, is_active } = req.body;
+    const { name, latitude, longitude, radius, notify_members, is_active, address } = req.body;
 
     const { rows: existing } = await pool.query('SELECT * FROM zones WHERE id = $1', [req.params.id]);
     if (!existing[0]) return res.status(404).json({ error: 'Zone not found' });
@@ -61,9 +61,10 @@ router.put('/:id', authenticate, async (req, res) => {
             center         = COALESCE(ST_GeogFromText($2), center),
             radius         = COALESCE($3, radius),
             notify_members = COALESCE($4, notify_members),
-            is_active      = COALESCE($5, is_active)
+            is_active      = COALESCE($5, is_active),
+            address        = COALESCE($7, address)
          WHERE id = $6
-         RETURNING id, name, radius, is_active, created_at,
+         RETURNING id, name, radius, address, is_active, created_at,
                    ST_Y(center::geometry) AS latitude,
                    ST_X(center::geometry) AS longitude`,
         [
@@ -73,6 +74,7 @@ router.put('/:id', authenticate, async (req, res) => {
             Array.isArray(notify_members) ? notify_members : null,
             is_active ?? null,
             req.params.id,
+            address != null ? address.toString().slice(0, 500) : null,
         ]
     );
     res.json(rows[0]);

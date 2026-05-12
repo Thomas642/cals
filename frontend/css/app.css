@@ -167,6 +167,32 @@ html, body {
 }
 .topbar-actions { display: flex; gap: .45rem; align-items: center; }
 
+/* Address autocomplete results dropdown */
+.address-results {
+  position: absolute; top: 100%; left: 0; right: 0;
+  background: var(--surface, #1a2340);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-top: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 50;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4);
+}
+.address-results .addr-item {
+  padding: .55rem .75rem;
+  font-size: .82rem;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.address-results .addr-item:last-child { border-bottom: 0; }
+.address-results .addr-item:hover { background: var(--surface2, #2a3450); }
+.address-results .addr-item-type {
+  font-size: .7rem; color: var(--text-muted);
+  text-transform: capitalize; margin-right: .3rem;
+}
+
 /* Hide button text labels on narrow screens — keep icons only */
 @media (max-width: 639px) {
   .topbar-actions .btn-label { display: none; }

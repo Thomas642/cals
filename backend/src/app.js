@@ -22,6 +22,7 @@ const shareRoutes    = require('./routes/share');
 const scheduleRoutes = require('./routes/schedule');
 const { startWatchdog } = require('./services/watchdog');
 const placesRoutes = require('./routes/places');
+const routingRoutes = require('./routes/routing');
 
 // ── Web Push setup ───────────────────────────────────────────────────────────
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
@@ -138,6 +139,7 @@ app.use('/api/chat',   apiLimiter, chatRoutes);
 app.use('/api/share',    apiLimiter, shareRoutes);
 app.use('/api/places',   apiLimiter, placesRoutes);
 app.use('/api/schedule', apiLimiter, scheduleRoutes);
+app.use('/api/routing',  apiLimiter, routingRoutes);
 
 // VAPID public key (needed by the frontend to subscribe to push)
 app.get('/api/push-key', (_, res) => {
@@ -272,6 +274,9 @@ async function runMigrations() {
     await pool.query(`ALTER TABLE zones ADD COLUMN IF NOT EXISTS zone_type VARCHAR(20) NOT NULL DEFAULT 'standard'`);
     await pool.query(`ALTER TABLE zones ADD COLUMN IF NOT EXISTS curfew_start TIME`);
     await pool.query(`ALTER TABLE zones ADD COLUMN IF NOT EXISTS curfew_end TIME`);
+
+    // Zones: postal address (filled via reverse geocoding when creating a zone)
+    await pool.query(`ALTER TABLE zones ADD COLUMN IF NOT EXISTS address VARCHAR(500) NOT NULL DEFAULT ''`);
 
     // Users: check-in support
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_checkin_at TIMESTAMPTZ`);
