@@ -74,7 +74,11 @@ const RoutingModule = (() => {
     document.body.appendChild(overlay);
 
     document.getElementById('navPickInApp').onclick = () => {
-      if (window.NavigationModule) NavigationModule.start(lat, lng, label);
+      if (typeof NavigationModule !== 'undefined') {
+        NavigationModule.start(lat, lng, label);
+      } else {
+        console.error('NavigationModule not loaded');
+      }
       overlay.remove();
     };
     document.getElementById('navPickWaze').onclick = () => { openInWaze(lat, lng); overlay.remove(); };
