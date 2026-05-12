@@ -75,6 +75,8 @@
     ['Eta',           setupEta],
     ['DrivingMode',   setupDrivingMode],
     ['Schedule',      setupSchedule],
+    ['CrashDetect',   setupCrashDetection],
+    ['Heatmap',       setupHeatmap],
   ]) {
     if (!fn) continue;
     try { fn(); } catch (e) { console.warn(`[setup${name}]`, e.message); }
@@ -609,6 +611,18 @@ function setupProfile() {
     updateSosPassiveStatus();
   });
 
+  // Crash detection toggle
+  const crashToggle = document.getElementById('crashDetectionToggle');
+  if (crashToggle) {
+    crashToggle.checked = localStorage.getItem('ft_crash_detection') === '1';
+    crashToggle.addEventListener('change', () => {
+      const on = crashToggle.checked;
+      localStorage.setItem('ft_crash_detection', on ? '1' : '0');
+      GeoModule.enableCrashDetection(on);
+      showToast(on ? '🚨 Détection choc activée' : '🚨 Détection choc désactivée', on ? 'Un SOS sera envoyé après 30s sans annulation' : '', on ? 'ok' : '');
+    });
+  }
+
   // Share links
   document.getElementById('createShareLink').addEventListener('click', createShareLink);
 
@@ -664,18 +678,28 @@ function setupHistory() {
       } else if (btn.dataset.shortcut === 'timeline') {
         document.getElementById('timelineContainer').classList.remove('hidden');
         document.getElementById('weekStatsContainer').classList.add('hidden');
+        document.getElementById('routinesContainer')?.classList.add('hidden');
         document.getElementById('tripList').innerHTML = '';
         await loadTimeline();
         return;
       } else if (btn.dataset.shortcut === 'stats') {
         document.getElementById('weekStatsContainer').classList.remove('hidden');
         document.getElementById('timelineContainer').classList.add('hidden');
+        document.getElementById('routinesContainer')?.classList.add('hidden');
         document.getElementById('tripList').innerHTML = '';
         await loadWeekStats();
+        return;
+      } else if (btn.dataset.shortcut === 'routines') {
+        document.getElementById('routinesContainer')?.classList.remove('hidden');
+        document.getElementById('weekStatsContainer').classList.add('hidden');
+        document.getElementById('timelineContainer').classList.add('hidden');
+        document.getElementById('tripList').innerHTML = '';
+        await loadRoutines();
         return;
       }
       document.getElementById('weekStatsContainer').classList.add('hidden');
       document.getElementById('timelineContainer').classList.add('hidden');
+      document.getElementById('routinesContainer')?.classList.add('hidden');
       await doLoadHistory();
     });
   });
@@ -1108,6 +1132,21 @@ async function renderAdminPanel() {
             <div class="invite-link">${location.origin}/login.html?token=${i.token}</div>
           `).join('') || '<p class="text-muted" style="font-size:.82rem">Aucune invitation en attente.</p>'}
         </div>
+      </div>
+
+      <div class="admin-section">
+        <h4>👤 Accès invité temporaire</h4>
+        <p class="text-muted" style="font-size:.82rem;margin-bottom:.75rem">Crée un lien magique sans mot de passe. L'accès expire automatiquement.</p>
+        <div class="form-group">
+          <label>Nom de l'invité</label>
+          <input type="text" id="guestName" placeholder="ex : Mamie, Babysitter…" maxlength="50">
+        </div>
+        <div class="form-group">
+          <label>Durée (heures, max 168)</label>
+          <input type="number" id="guestDuration" value="24" min="1" max="168">
+        </div>
+        <button class="btn btn-ghost btn-sm" id="genGuestLink">Créer accès invité</button>
+        <div id="guestLinkResult" class="mt-1"></div>
       </div>`;
 
     // Locate SOS on map
@@ -1144,6 +1183,25 @@ async function renderAdminPanel() {
       }
     });
 
+    // Guest invite
+    document.getElementById('genGuestLink')?.addEventListener('click', async () => {
+      const name = document.getElementById('guestName').value.trim();
+      const duration_hours = parseInt(document.getElementById('guestDuration').value) || 24;
+      if (!name) { showToast('⚠️ Nom requis', ''); return; }
+      try {
+        const { url, expires_at } = await API.post('/api/auth/guest-invite', { name, duration_hours });
+        const expiresStr = new Date(expires_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+        document.getElementById('guestLinkResult').innerHTML = `
+          <div class="invite-link">${url}</div>
+          <div style="font-size:.72rem;color:var(--text-muted);margin-top:.3rem">Expire le ${expiresStr}</div>
+          <button class="btn btn-ghost btn-sm mt-1" onclick="navigator.clipboard.writeText('${escapeHtml(url)}');showToast('✅ Copié','')">Copier le lien</button>`;
+        document.getElementById('guestName').value = '';
+        showToast(`👤 Accès créé pour ${name}`, `Expire dans ${duration_hours}h`, 'ok');
+      } catch (err) {
+        showToast('Erreur', err.message);
+      }
+    });
+
   } catch (err) {
     container.innerHTML = `<p class="text-danger">Erreur : ${err.message}</p>`;
   }
@@ -1170,6 +1228,28 @@ function setupNavigation() {
       const next = MapModule.getTheme() === 'dark' ? 'light' : 'dark';
       MapModule.setTheme(next);
       updateThemeBtn(next);
+    });
+  }
+
+  // Heatmap toggle
+  const btnHeatmap = document.getElementById('btnHeatmap');
+  if (btnHeatmap) {
+    btnHeatmap.addEventListener('click', async () => {
+      if (MapModule.isHeatmapVisible()) {
+        MapModule.hideHeatmap();
+        btnHeatmap.style.color = '';
+        return;
+      }
+      try {
+        showToast('🔥 Chargement heatmap…', '');
+        const points = await API.get('/api/history/heatmap?days=30');
+        if (!points.length) { showToast('Heatmap', 'Aucune donnée disponible'); return; }
+        MapModule.showHeatmap(points);
+        btnHeatmap.style.color = 'var(--danger)';
+        showToast('🔥 Heatmap activée', `${points.length} points — 30 derniers jours`);
+      } catch (err) {
+        showToast('Erreur heatmap', err.message);
+      }
     });
   }
 
@@ -1762,6 +1842,104 @@ async function populateScheduleSelects() {
 
   selM.innerHTML = members.map((m) => `<option value="${m.id}">${m.name}</option>`).join('');
   selZ.innerHTML = zones.map((z) => `<option value="${z.id}">${z.name}</option>`).join('');
+}
+
+// ── Crash detection (choc/accident) ──────────────────────────────────────────
+let _crashCountdownTimer  = null;
+let _crashCountdownValue  = 30;
+
+function setupCrashDetection() {
+  // Restore from localStorage
+  if (localStorage.getItem('ft_crash_detection') === '1') {
+    GeoModule.enableCrashDetection(true);
+    const toggle = document.getElementById('crashDetectionToggle');
+    if (toggle) toggle.checked = true;
+  }
+
+  document.addEventListener('crash-warning', startCrashCountdown);
+
+  const cancelBtn = document.getElementById('crashCancelBtn');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', cancelCrashCountdown);
+  }
+}
+
+function startCrashCountdown() {
+  if (_crashCountdownTimer) return; // already running
+
+  const overlay = document.getElementById('crashWarningOverlay');
+  if (!overlay) return;
+
+  _crashCountdownValue = 30;
+  overlay.classList.remove('hidden');
+  document.getElementById('crashCountdown').textContent = _crashCountdownValue;
+
+  // vibrate if available
+  if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 500]);
+
+  _crashCountdownTimer = setInterval(async () => {
+    _crashCountdownValue--;
+    const el = document.getElementById('crashCountdown');
+    if (el) el.textContent = _crashCountdownValue;
+
+    if (_crashCountdownValue <= 0) {
+      clearInterval(_crashCountdownTimer);
+      _crashCountdownTimer = null;
+      overlay.classList.add('hidden');
+      // Send SOS
+      try {
+        const latlng = GeoModule.getCurrentLatLng();
+        const body = latlng ? { latitude: latlng[0], longitude: latlng[1] } : {};
+        await API.post('/api/notify/sos', body);
+        showToast('🆘 SOS auto envoyé', 'Choc détecté — famille alertée', 'sos');
+      } catch {}
+    }
+  }, 1000);
+}
+
+function cancelCrashCountdown() {
+  if (_crashCountdownTimer) { clearInterval(_crashCountdownTimer); _crashCountdownTimer = null; }
+  const overlay = document.getElementById('crashWarningOverlay');
+  if (overlay) overlay.classList.add('hidden');
+  showToast('✅ Alerte annulée', 'Pas d\'accident détecté');
+}
+
+// ── Heatmap setup ─────────────────────────────────────────────────────────────
+function setupHeatmap() {
+  // nothing — button listener is in setupNavigation
+}
+
+// ── Routines récurrentes ──────────────────────────────────────────────────────
+async function loadRoutines() {
+  const userId = document.getElementById('historyMember').value;
+  const container = document.getElementById('routinesContainer');
+  if (!container) return;
+
+  container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Analyse des routines…</p>';
+
+  try {
+    const routines = await API.get(`/api/history/routines?userId=${userId}`);
+    if (!routines.length) {
+      container.innerHTML = '<p class="text-muted" style="text-align:center;padding:.75rem 0">Aucune routine détectée (60 jours, min. 3 répétitions)</p>';
+      return;
+    }
+
+    container.innerHTML = `
+      <div class="timeline-title">🔄 Trajets récurrents — 60 derniers jours</div>
+      ${routines.map((r, i) => `
+        <div class="routine-card">
+          <div class="routine-header">
+            <span class="routine-rank">#${i + 1}</span>
+            <span class="routine-count">${r.count}×</span>
+          </div>
+          <div class="routine-info">
+            <div class="routine-time">⏰ Départ habituel : ${r.avg_hour}</div>
+            <div class="routine-dist">📏 ${r.avg_distance_km} km · ${r.avg_speed_kmh} km/h moy.</div>
+          </div>
+        </div>`).join('')}`;
+  } catch (err) {
+    container.innerHTML = `<p class="text-danger">Erreur : ${err.message}</p>`;
+  }
 }
 
 async function renderScheduleList() {
