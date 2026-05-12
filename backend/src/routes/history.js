@@ -100,12 +100,15 @@ function summariseTrip(trip) {
         ? (distanceKm / (durationMs / 3_600_000))
         : 0;
 
+    const maxSpeed = pts.reduce((mx, p) => Math.max(mx, p.speed || 0), 0);
+
     return {
         started_at: trip.started_at,
         ended_at,
         point_count: pts.length,
         distance_km: Math.round(distanceKm * 100) / 100,
         avg_speed_kmh: Math.round(avgSpeed * 10) / 10,
+        max_speed_kmh: Math.round(maxSpeed),
         points: pts,
     };
 }

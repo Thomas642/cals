@@ -616,6 +616,14 @@ function renderTripList(trips, userId) {
   }
 
   const totalDist = trips.reduce((s, t) => s + parseFloat(t.distance_km || 0), 0);
+  const totalDurMs = trips.reduce((s, t) => s + (new Date(t.ended_at) - new Date(t.started_at)), 0);
+  const maxSpeed   = trips.reduce((mx, t) => Math.max(mx, t.max_speed_kmh || t.avg_speed_kmh || 0), 0);
+
+  const fmtTotalDur = (ms) => {
+    const m = Math.floor(ms / 60_000);
+    if (m < 60) return `${m} min`;
+    return `${Math.floor(m / 60)}h${m % 60 > 0 ? ` ${m % 60}min` : ''}`;
+  };
 
   container.innerHTML = `
     <div class="trip-summary">
@@ -625,22 +633,34 @@ function renderTripList(trips, userId) {
       </div>
       <div class="trip-summary-item">
         <span class="trip-summary-val">${totalDist.toFixed(1)}</span>
-        <span class="trip-summary-label">km au total</span>
+        <span class="trip-summary-label">km total</span>
+      </div>
+      <div class="trip-summary-item">
+        <span class="trip-summary-val">${fmtTotalDur(totalDurMs)}</span>
+        <span class="trip-summary-label">durée</span>
+      </div>
+      <div class="trip-summary-item">
+        <span class="trip-summary-val">${Math.round(maxSpeed)}</span>
+        <span class="trip-summary-label">km/h max</span>
       </div>
     </div>
-    <p class="trip-hint-global">Toucher pour voir · Appui long pour rejouer</p>
+    <p class="trip-hint-global">Toucher pour voir le trajet · Appui long pour rejouer</p>
     ${trips.map((t, i) => {
       const s = new Date(t.started_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
       const e = new Date(t.ended_at).toLocaleTimeString('fr-FR',   { hour: '2-digit', minute: '2-digit' });
+      const dur = formatDuration(t.started_at, t.ended_at);
+      const maxSpd = t.max_speed_kmh || t.avg_speed_kmh || 0;
+      const isMoving = t.distance_km > 0.1;
       return `
         <div class="trip-card" data-index="${i}">
           <div class="trip-header">
             <span class="trip-time">${s} → ${e}</span>
-            <span class="trip-distance">${t.distance_km} km</span>
+            <span class="trip-distance">${t.distance_km < 0.1 ? '< 0.1' : t.distance_km} km</span>
           </div>
           <div class="trip-meta">
-            <span>⏱ ${formatDuration(t.started_at, t.ended_at)}</span>
-            <span>⚡ ${t.avg_speed_kmh} km/h moy.</span>
+            <span>⏱ ${dur}</span>
+            <span>⚡ ${t.avg_speed_kmh} moy.</span>
+            ${maxSpd > t.avg_speed_kmh ? `<span>🔺 ${Math.round(maxSpd)} max</span>` : ''}
             <span>📍 ${t.point_count} pts</span>
           </div>
         </div>`;
@@ -810,15 +830,18 @@ function setupAdmin() {
 
 async function renderAdminPanel() {
   const container = document.getElementById('adminContent');
-  container.innerHTML = '<p class="text-muted">Chargement…</p>';
+  container.innerHTML = '<p class="text-muted" style="text-align:center;padding:1.5rem">Chargement…</p>';
 
   try {
-    const [stats, members, invitations, sosHistory] = await Promise.all([
+    const [stats, members, invitations, sosHistory, msgHistory] = await Promise.all([
       API.get('/api/members/stats/global'),
       API.get('/api/members'),
       API.get('/api/auth/invitations'),
-      API.get('/api/notify/history?type=sos&limit=10').catch(() => []),
+      API.get('/api/notify/history?type=sos&limit=5').catch(() => []),
+      API.get('/api/notify/history?type=quick_message&limit=5').catch(() => []),
     ]);
+
+    const totalDistKm = (stats.top_members || []).reduce((s, m) => s + parseFloat(m.distance_km || 0), 0);
 
     container.innerHTML = `
       <div class="admin-section">
@@ -830,43 +853,102 @@ async function renderAdminPanel() {
           </div>
           <div class="stat-card">
             <div class="stat-value">${(stats.total_positions || 0).toLocaleString('fr-FR')}</div>
-            <div class="stat-label">Positions enregistrées</div>
+            <div class="stat-label">Points GPS enregistrés</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">${totalDistKm.toFixed(0)}</div>
+            <div class="stat-label">km parcourus (total)</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">${invitations.filter((i) => !i.used_by_name).length}</div>
+            <div class="stat-label">Invitations actives</div>
           </div>
         </div>
       </div>
 
+      ${(stats.top_members || []).length > 0 ? `
+      <div class="admin-section">
+        <h4>Distance parcourue par membre</h4>
+        ${stats.top_members.map((m, i) => {
+          const maxDist = stats.top_members[0].distance_km || 1;
+          const pct = Math.round((m.distance_km / maxDist) * 100);
+          return `
+          <div class="admin-distance-row">
+            <div class="admin-dist-label">
+              <span>${i + 1 === 1 ? '🥇' : i + 1 === 2 ? '🥈' : i + 1 === 3 ? '🥉' : '▸'} ${m.name}</span>
+              <span class="admin-dist-val">${parseFloat(m.distance_km).toFixed(1)} km</span>
+            </div>
+            <div class="admin-dist-bar-outer">
+              <div class="admin-dist-bar-inner" style="width:${pct}%"></div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>` : ''}
+
       <div class="admin-section">
         <h4>Membres</h4>
-        ${members.map((m) => `
+        ${members.map((m) => {
+          const livePos = memberData[m.id];
+          const ageSec = livePos?.recorded_at ? (Date.now() - new Date(livePos.recorded_at)) / 1000 : null;
+          const statusDot = ageSec == null ? 'offline' : ageSec < 120 ? '' : ageSec < 600 ? 'away' : 'offline';
+          const lastSeen = ageSec != null ? timeAgo(new Date(livePos.recorded_at)) : 'Jamais';
+          return `
           <div class="admin-member-row">
-            <div class="member-avatar" style="width:32px;height:32px;font-size:.8rem;background:${m.color}">
-              ${m.avatar_url ? `<img src="${m.avatar_url}" alt="">` : m.name.slice(0, 2).toUpperCase()}
+            <div class="member-avatar-wrap" style="flex-shrink:0">
+              <div class="member-avatar" style="width:36px;height:36px;font-size:.82rem;background:${m.color}">
+                ${m.avatar_url ? `<img src="${m.avatar_url}" alt="">` : m.name.slice(0, 2).toUpperCase()}
+              </div>
+              <span class="member-online-dot ${statusDot}"></span>
             </div>
             <div class="member-info">
-              <div class="member-name">${m.name} <small style="color:var(--text-muted)">${m.role}</small></div>
-              <div class="text-muted">${m.email}</div>
+              <div class="member-name">
+                ${m.name}
+                <span class="admin-role-badge admin-role-${m.role}">${m.role}</span>
+              </div>
+              <div class="text-muted" style="font-size:.73rem">${m.email}</div>
+              <div class="text-muted" style="font-size:.71rem;margin-top:.1rem">Vu : ${lastSeen}${livePos?.battery != null ? ` · 🔋${livePos.battery}%` : ''}</div>
             </div>
             <div class="admin-actions">
               ${m.id !== currentUser.id ? `
                 <button class="btn btn-ghost btn-sm" data-toggle="${m.id}" data-active="${m.is_active}">
                   ${m.is_active ? 'Désactiver' : 'Activer'}
-                </button>` : ''}
+                </button>` : '<span class="text-muted" style="font-size:.75rem">Vous</span>'}
             </div>
-          </div>`).join('')}
+          </div>`;
+        }).join('')}
       </div>
 
       <div class="admin-section">
-        <h4>Historique SOS</h4>
+        <h4>Derniers SOS</h4>
         ${sosHistory.length === 0
-          ? '<p class="text-muted">Aucun SOS enregistré.</p>'
+          ? '<p class="text-muted" style="font-size:.82rem">Aucun SOS enregistré. ✅</p>'
           : sosHistory.map((e) => {
               const p = e.payload || {};
               const when = new Date(e.sent_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-              return `<div style="display:flex;align-items:center;gap:.75rem;padding:.5rem 0;border-bottom:1px solid var(--border)">
-                <span style="font-size:1.4rem">🆘</span>
-                <div style="flex:1">
-                  <div style="font-weight:600;font-size:.875rem">${e.sender_name || 'Inconnu'}</div>
-                  <div class="text-muted">${when}${p.latitude ? ` · ${p.latitude.toFixed(4)}, ${p.longitude.toFixed(4)}` : ''}</div>
+              return `<div class="admin-event-row">
+                <span class="admin-event-icon">🆘</span>
+                <div style="flex:1;min-width:0">
+                  <div style="font-weight:700;font-size:.85rem">${e.sender_name || 'Inconnu'}</div>
+                  <div class="text-muted" style="font-size:.72rem">${when}${p.latitude ? ` · ${p.latitude.toFixed(4)}, ${p.longitude.toFixed(4)}` : ''}</div>
+                </div>
+                ${p.latitude ? `<button class="btn btn-ghost btn-sm" data-lat="${p.latitude}" data-lon="${p.longitude}">📍</button>` : ''}
+              </div>`;
+            }).join('')
+        }
+      </div>
+
+      <div class="admin-section">
+        <h4>Derniers messages</h4>
+        ${msgHistory.length === 0
+          ? '<p class="text-muted" style="font-size:.82rem">Aucun message envoyé.</p>'
+          : msgHistory.map((e) => {
+              const p = e.payload || {};
+              const when = new Date(e.sent_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+              return `<div class="admin-event-row">
+                <span class="admin-event-icon">💬</span>
+                <div style="flex:1;min-width:0">
+                  <div style="font-weight:600;font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.text || ''}</div>
+                  <div class="text-muted" style="font-size:.72rem">${e.sender_name || 'Inconnu'} · ${when}</div>
                 </div>
               </div>`;
             }).join('')
@@ -877,12 +959,21 @@ async function renderAdminPanel() {
         <h4>Invitations</h4>
         <button class="btn btn-primary btn-sm" id="genInvite">Générer un lien</button>
         <div id="inviteResult" class="mt-1"></div>
-        <div class="mt-2">
+        <div class="mt-1">
           ${invitations.filter((i) => !i.used_by_name).map((i) => `
             <div class="invite-link">${location.origin}/login.html?token=${i.token}</div>
-          `).join('') || '<p class="text-muted">Aucune invitation en attente.</p>'}
+          `).join('') || '<p class="text-muted" style="font-size:.82rem">Aucune invitation en attente.</p>'}
         </div>
       </div>`;
+
+    // Locate SOS on map
+    container.querySelectorAll('[data-lat]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.getElementById('adminOverlay').classList.add('hidden');
+        try { MapModule.getMap().setView([parseFloat(btn.dataset.lat), parseFloat(btn.dataset.lon)], 16); } catch {}
+        setActiveNav('navMap');
+      });
+    });
 
     // Toggle active
     container.querySelectorAll('[data-toggle]').forEach((btn) => {
