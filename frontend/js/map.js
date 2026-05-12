@@ -121,16 +121,13 @@ const MapModule = (() => {
     const age = m.recorded_at ? timeAgo(new Date(m.recorded_at)) : 'inconnu';
     const bat = m.battery != null ? `🔋 ${m.battery}%` : '';
     const spd = m.speed ? `⚡ ${Math.round(m.speed)} km/h` : '';
-    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${m.latitude},${m.longitude}`;
-    const wazeUrl = `https://waze.com/ul?ll=${m.latitude},${m.longitude}&navigate=yes`;
+    const safeName = (m.name || '').replace(/'/g, "\\'");
     return `<b>${m.name}</b><br>
       ${m.status ? `<em>${m.status}</em><br>` : ''}
       ${bat} ${spd}<br>
-      <small>Mis à jour ${age}</small><br>
-      <div style="display:flex;gap:.4rem;margin-top:.5rem">
-        <a href="${mapsUrl}" target="_blank" style="font-size:.75rem;color:var(--primary-l)">Google Maps</a>
-        <a href="${wazeUrl}" target="_blank" style="font-size:.75rem;color:var(--primary-l)">Waze</a>
-      </div>`;
+      <small>Mis à jour ${age}</small>
+      <button class="btn btn-primary btn-sm btn-full" style="margin-top:.5rem"
+        onclick="RoutingModule.openNavigation(${m.latitude},${m.longitude},'${safeName}')">🧭 Y aller</button>`;
   }
 
   function removeMember(id) {

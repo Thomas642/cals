@@ -70,6 +70,9 @@
     ['Admin',         setupAdmin],
     ['Locate',        setupLocate],
     ['Search',        setupSearch],
+    ['GoHome',        setupGoHome],
+    ['ShareTrip',     setupShareTrip],
+    ['GpsDiag',       setupGpsDiagnostic],
     ['Socket',        setupSocket],
     ['Install',       setupInstall],
     ['Chat',          setupChat],
@@ -457,6 +460,123 @@ function setupSearch() {
   document.getElementById('searchBtn')?.addEventListener('click', () => {
     if (typeof RoutingModule !== 'undefined') RoutingModule.openSearch();
   });
+}
+
+// ── "Je rentre" — share ETA-to-home to family chat ────────────────────────────
+function setupGoHome() {
+  document.getElementById('goHomeBtn')?.addEventListener('click', async () => {
+    const home = zones.find((z) =>
+      z.name.toLowerCase().includes('maison') || z.name.toLowerCase().includes('home')
+    );
+    if (!home) {
+      showToast('Pas de zone "Maison"', 'Créez d\'abord une zone nommée Maison ou Home');
+      return;
+    }
+    const here = GeoModule.getCurrentLatLng();
+    if (!here) {
+      showToast('GPS inconnu', 'Position non disponible — réessayez dans quelques secondes');
+      return;
+    }
+    showToast('🏡 Calcul ETA…', 'Trajet vers la maison');
+    const route = await RoutingModule.computeRoute(here[0], here[1], home.latitude, home.longitude);
+    const min = route ? Math.max(1, Math.round(route.duration_s / 60))
+                      : Math.max(1, Math.round(haversineKm(here[0], here[1], home.latitude, home.longitude) / 50 * 60));
+    const distKm = route ? (route.distance_m / 1000).toFixed(1)
+                         : haversineKm(here[0], here[1], home.latitude, home.longitude).toFixed(1);
+    try {
+      await API.post('/api/chat', { text: `🏡 Je rentre — arrivée estimée à ${home.name} dans ~${min} min (${distKm} km)` });
+      showToast('Message envoyé', `ETA ${min} min partagée à la famille`);
+    } catch (err) {
+      showToast('Erreur', err.message);
+    }
+  });
+}
+
+// ── Quick share: generate a temporary public tracking link in 1 click ─────────
+function setupShareTrip() {
+  document.getElementById('shareTripBtn')?.addEventListener('click', async () => {
+    try {
+      const { token, expires_in } = await API.post('/api/share', { hours: 2, label: 'Trajet en cours' });
+      const url = `${location.origin}/share.html?token=${token}`;
+      showShareModal(url, expires_in);
+    } catch (err) {
+      showToast('Erreur', err.message);
+    }
+  });
+}
+
+function showShareModal(url, expiresIn) {
+  document.getElementById('shareTripOverlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'shareTripOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:9999;padding:1rem';
+  overlay.innerHTML = `
+    <div style="background:var(--surface,#0f1629);border:1px solid var(--border);border-radius:14px;padding:1.2rem 1.4rem;width:100%;max-width:380px;color:var(--text,#e2e8f0)">
+      <h3 style="margin:0 0 .5rem 0;font-size:1rem">📡 Trajet partagé</h3>
+      <p style="margin:0 0 .8rem 0;font-size:.82rem;color:var(--text-muted)">Lien valable ${expiresIn || '2h'}. Le destinataire pourra suivre votre position en direct sans compte.</p>
+      <input type="text" readonly value="${url}" id="shareUrl"
+        style="width:100%;padding:.55rem .7rem;background:var(--surface2);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-size:.78rem;font-family:monospace;margin-bottom:.6rem">
+      <button class="btn btn-primary btn-full" id="shareCopy">📋 Copier le lien</button>
+      <button class="btn btn-ghost btn-full mt-1" id="shareWebshare">📤 Partager…</button>
+      <button class="btn btn-ghost btn-full mt-1" id="shareClose">Fermer</button>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('shareCopy').onclick = async () => {
+    try { await navigator.clipboard.writeText(url); showToast('Copié !', 'Lien dans le presse-papier'); }
+    catch { document.getElementById('shareUrl').select(); document.execCommand('copy'); }
+  };
+  document.getElementById('shareWebshare').onclick = async () => {
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Mon trajet en cours', text: 'Suis-moi en direct :', url }); } catch {}
+    } else {
+      showToast('Indisponible', 'Web Share API non supportée — utilisez Copier');
+    }
+  };
+  document.getElementById('shareClose').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+}
+
+// ── GPS diagnostic widget (in profile panel) ──────────────────────────────────
+function setupGpsDiagnostic() {
+  // Inject the diagnostic block at the top of the Profile panel if not already there
+  const profileSheet = document.querySelector('#profileOverlay .panel-sheet');
+  if (!profileSheet || document.getElementById('gpsDiag')) return;
+  const block = document.createElement('div');
+  block.id = 'gpsDiag';
+  block.style.cssText = 'background:var(--surface2);border-radius:10px;padding:.7rem .85rem;margin-bottom:1rem;font-size:.82rem';
+  block.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem">
+      <strong>📡 Diagnostic GPS</strong>
+      <button class="btn btn-ghost btn-sm" id="gpsRecalibrate" style="font-size:.72rem">Re-calibrer</button>
+    </div>
+    <div id="gpsDiagBody" style="color:var(--text-muted);line-height:1.5"></div>`;
+  const title = profileSheet.querySelector('.panel-title');
+  title?.after(block);
+  document.getElementById('gpsRecalibrate').onclick = async () => {
+    showToast('🔄 Recalibrage GPS', 'Redémarrage du suivi…');
+    await GeoModule.recalibrate();
+    setTimeout(refreshGpsDiag, 1500);
+  };
+  refreshGpsDiag();
+  setInterval(refreshGpsDiag, 5000);
+}
+
+function refreshGpsDiag() {
+  const body = document.getElementById('gpsDiagBody');
+  if (!body) return;
+  const s = GeoModule.getStatus();
+  const acc = s.accuracyM != null ? `${Math.round(s.accuracyM)} m` : '—';
+  const accColor = s.accuracyM == null ? 'var(--text-muted)'
+    : s.accuracyM < 30 ? '#10b981' : s.accuracyM < 100 ? '#f59e0b' : '#ef4444';
+  const mode = s.drivingMode ? '🚗 Conduite (10s)' : s.batterySaverActive ? '🔋 Économie (120s)' : `Standard (${s.intervalSec}s)`;
+  const lastFix = s.lastFixAt ? timeAgo(new Date(s.lastFixAt)) : 'jamais';
+  body.innerHTML = `
+    <div>Précision : <span style="color:${accColor};font-weight:600">${acc}</span></div>
+    <div>Mode : ${mode}</div>
+    <div>Plateforme : ${s.native ? 'App native (background)' : 'Web (premier plan)'}</div>
+    <div>Wake-Lock : ${s.hasWakeLock ? '✅ actif' : '⚪ inactif'}</div>
+    <div>Dernier point : ${lastFix}</div>
+    ${s.isPrivate ? '<div style="color:#f59e0b">⚠ Mode privé — pas de partage</div>' : ''}`;
 }
 
 // ── Locate ────────────────────────────────────────────────────────────────────
