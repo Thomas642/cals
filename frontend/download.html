@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Family Tracker — Télécharger l'appli</title>
+  <meta name="theme-color" content="#070c18">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #070c18;
+      --surface:   #0f1629;
+      --surface2:  #1a2340;
+      --primary:   #3b82f6;
+      --primary-d: #2563eb;
+      --text:      #e2e8f0;
+      --text-muted:#94a3b8;
+      --green:     #22c55e;
+      --border:    rgba(255,255,255,.08);
+      --radius:    14px;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem 4rem;
+    }
+
+    /* ── Hero ── */
+    .hero {
+      text-align: center;
+      max-width: 480px;
+      width: 100%;
+      margin-bottom: 2.5rem;
+    }
+    .hero-icon {
+      width: 80px; height: 80px;
+      background: linear-gradient(135deg, var(--primary), #7c3aed);
+      border-radius: 22px;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 1.2rem;
+      box-shadow: 0 8px 32px rgba(59,130,246,.35);
+    }
+    .hero-icon svg { width: 44px; height: 44px; fill: #fff; }
+    .hero h1 { font-size: 2rem; font-weight: 800; margin-bottom: .4rem; }
+    .hero p  { color: var(--text-muted); font-size: 1rem; line-height: 1.6; }
+
+    /* ── Version badge ── */
+    .version-badge {
+      display: inline-flex; align-items: center; gap: .4rem;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      padding: .25rem .8rem;
+      font-size: .78rem;
+      color: var(--text-muted);
+      margin-top: .8rem;
+    }
+    .version-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+
+    /* ── Download button ── */
+    .dl-btn {
+      display: flex; align-items: center; justify-content: center; gap: .7rem;
+      background: linear-gradient(135deg, var(--primary), var(--primary-d));
+      color: #fff;
+      font-family: inherit;
+      font-size: 1.1rem;
+      font-weight: 700;
+      border: none;
+      border-radius: var(--radius);
+      padding: 1rem 2rem;
+      cursor: pointer;
+      width: 100%;
+      max-width: 380px;
+      margin: 1.5rem auto 0;
+      text-decoration: none;
+      box-shadow: 0 4px 24px rgba(59,130,246,.4);
+      transition: transform .15s, box-shadow .15s;
+    }
+    .dl-btn:active { transform: scale(.97); box-shadow: 0 2px 12px rgba(59,130,246,.3); }
+    .dl-btn svg { width: 22px; height: 22px; flex-shrink: 0; }
+    .dl-btn small { font-size: .72rem; font-weight: 400; opacity: .8; display: block; }
+
+    /* ── Steps ── */
+    .steps-title {
+      font-size: .8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--text-muted);
+      margin: 2.5rem 0 1rem;
+      text-align: center;
+    }
+    .steps {
+      width: 100%;
+      max-width: 480px;
+      display: flex;
+      flex-direction: column;
+      gap: .75rem;
+    }
+    .step {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.2rem;
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
+    }
+    .step-num {
+      width: 32px; height: 32px; flex-shrink: 0;
+      background: var(--primary);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .85rem;
+      font-weight: 700;
+    }
+    .step-body { flex: 1; }
+    .step-body strong { display: block; font-size: .95rem; margin-bottom: .2rem; }
+    .step-body p { font-size: .83rem; color: var(--text-muted); line-height: 1.5; margin: 0; }
+    .step-body code {
+      background: var(--surface2);
+      border-radius: 5px;
+      padding: .1rem .4rem;
+      font-size: .8rem;
+      color: var(--primary);
+    }
+
+    /* ── Warning box ── */
+    .warn {
+      background: rgba(251,191,36,.07);
+      border: 1px solid rgba(251,191,36,.25);
+      border-radius: var(--radius);
+      padding: .9rem 1.1rem;
+      font-size: .82rem;
+      color: #fbbf24;
+      display: flex;
+      gap: .7rem;
+      align-items: flex-start;
+      width: 100%;
+      max-width: 480px;
+      margin-top: 1.5rem;
+      line-height: 1.5;
+    }
+    .warn svg { flex-shrink: 0; margin-top: .05rem; }
+
+    /* ── Footer ── */
+    .footer-link {
+      margin-top: 2rem;
+      font-size: .82rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+    .footer-link a { color: var(--primary); text-decoration: none; }
+
+    /* ── iOS notice ── */
+    .ios-notice {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: .9rem 1.1rem;
+      font-size: .82rem;
+      color: var(--text-muted);
+      width: 100%;
+      max-width: 480px;
+      margin-top: 1rem;
+      line-height: 1.5;
+      display: none;
+    }
+    .ios-notice b { color: var(--text); }
+  </style>
+</head>
+<body>
+
+<!-- Hero -->
+<div class="hero">
+  <div class="hero-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+    </svg>
+  </div>
+  <h1>Family Tracker</h1>
+  <p>L'application familiale de localisation en temps réel.<br>Gratuite, privée, sans abonnement.</p>
+  <div class="version-badge" id="versionBadge">
+    <span class="dot"></span>
+    <span id="versionText">Chargement…</span>
+  </div>
+</div>
+
+<!-- Download button -->
+<a id="dlBtn" class="dl-btn" href="/download/FamilyTracker.apk" download="FamilyTracker.apk">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M5 20h14v-2H5v2zm7-18L5.33 8h3.84v5h5.66V8h3.84L12 2z"/>
+  </svg>
+  <span>
+    Télécharger l'APK Android
+    <small>Gratuit · Aucun compte Google requis</small>
+  </span>
+</a>
+
+<!-- iOS notice (shown on iPhone) -->
+<div class="ios-notice" id="iosNotice">
+  <b>iPhone détecté.</b> Les APK Android ne fonctionnent pas sur iOS.
+  Utilisez la version web en ajoutant le site à votre écran d'accueil depuis Safari (icône Partager → "Sur l'écran d'accueil").
+</div>
+
+<!-- Steps -->
+<p class="steps-title">Installation en 3 étapes</p>
+
+<div class="steps">
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <strong>Télécharge le fichier</strong>
+      <p>Appuie sur le bouton ci-dessus. Le fichier <code>FamilyTracker.apk</code> se télécharge dans ton dossier Téléchargements.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <strong>Autorise les sources inconnues</strong>
+      <p>Android va demander d'autoriser l'installation depuis le navigateur. Appuie sur <strong>Paramètres</strong> puis active l'option, puis reviens en arrière et appuie sur <strong>Installer</strong>.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <strong>Ouvre l'application et connecte-toi</strong>
+      <p>Lance Family Tracker, entre tes identifiants et c'est parti ! La position GPS continue même écran éteint.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Warning -->
+<div class="warn">
+  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+  </svg>
+  <span>
+    <b>Mets à jour régulièrement.</b> Quand une nouvelle version est disponible,
+    retélécharge simplement l'APK depuis cette page et installe-le — Android remplace automatiquement l'ancienne version.
+  </span>
+</div>
+
+<p class="footer-link">
+  Déjà installé ? <a href="/login.html">Se connecter via le navigateur</a>
+</p>
+
+<script>
+  // Detect iOS and show notice instead
+  if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+    document.getElementById('dlBtn').style.display = 'none';
+    document.getElementById('iosNotice').style.display = 'block';
+  }
+
+  // Load version info from server
+  fetch('/download/version.json')
+    .then(r => r.ok ? r.json() : null)
+    .then(data => {
+      if (data?.version) {
+        document.getElementById('versionText').textContent =
+          `Version ${data.version} · ${new Date(data.built_at).toLocaleDateString('fr-FR')}`;
+      } else {
+        document.getElementById('versionText').textContent = 'Version disponible';
+      }
+    })
+    .catch(() => {
+      document.getElementById('versionText').textContent = 'Version disponible';
+    });
+</script>
+</body>
+</html>
