@@ -893,6 +893,19 @@ hr[style*="border-color:var(--border)"] { opacity: .6; }
 .week-stat-km { font-size: .92rem; font-weight: 800; color: var(--primary-l); }
 .week-stat-meta { font-size: .72rem; color: var(--text-muted); }
 
+/* ─── Monthly stats table (admin) ──────────────────────────────────────────── */
+.month-stats-table { font-size: .8rem; }
+.month-stats-head, .month-stats-row {
+  display: grid; grid-template-columns: 2fr 1fr 1fr 1.5fr 1.5fr;
+  gap: .25rem; align-items: center; padding: .4rem 0;
+}
+.month-stats-head {
+  color: var(--text-muted); font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; font-size: .68rem; border-bottom: 1px solid var(--border); margin-bottom: .2rem;
+}
+.month-stats-row { border-bottom: 1px solid var(--border); }
+.month-stats-row:last-child { border-bottom: none; }
+
 /* ─── Responsive ────────────────────────────────────────────────────────────── */
 @media (min-width: 640px) {
   #sidebar { width: 360px; }

@@ -31,6 +31,15 @@
       }
     });
 
+    // Battery saver notifications
+    document.addEventListener('battery-saver', (e) => {
+      if (e.detail.active) {
+        showToast(`🔋 Mode économie batterie`, `GPS toutes les 2 min (batterie : ${e.detail.level}%)`, 'warning');
+      } else {
+        showToast(`🔋 Batterie rechargée`, 'Intervalle GPS normal rétabli', 'ok');
+      }
+    });
+
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(console.warn);
     }
@@ -650,6 +659,14 @@ function setupHistory() {
 
   document.getElementById('loadHistory').addEventListener('click', doLoadHistory);
 
+  document.getElementById('exportCsvBtn').addEventListener('click', () => {
+    const userId = document.getElementById('historyMember').value;
+    const from   = document.getElementById('historyFrom').value;
+    const to     = document.getElementById('historyTo').value;
+    const member = Object.values(memberData).find((m) => m.id === userId);
+    exportTripsCsv(userId, from, to, member?.name || 'membre');
+  });
+
   document.getElementById('closeHistory').addEventListener('click', () => {
     overlay.classList.add('hidden');
     try { MapModule.clearTrip(); } catch {}
@@ -917,12 +934,13 @@ async function renderAdminPanel() {
   container.innerHTML = '<p class="text-muted" style="text-align:center;padding:1.5rem">Chargement…</p>';
 
   try {
-    const [stats, members, invitations, sosHistory, msgHistory] = await Promise.all([
+    const [stats, members, invitations, sosHistory, msgHistory, monthStats] = await Promise.all([
       API.get('/api/members/stats/global'),
       API.get('/api/members'),
       API.get('/api/auth/invitations'),
       API.get('/api/notify/history?type=sos&limit=5').catch(() => []),
       API.get('/api/notify/history?type=quick_message&limit=5').catch(() => []),
+      API.get('/api/history/stats/month').catch(() => []),
     ]);
 
     const totalDistKm = (stats.top_members || []).reduce((s, m) => s + parseFloat(m.distance_km || 0), 0);
@@ -967,6 +985,24 @@ async function renderAdminPanel() {
             </div>
           </div>`;
         }).join('')}
+      </div>` : ''}
+
+      ${monthStats.length > 0 ? `
+      <div class="admin-section">
+        <h4>📅 Bilan du mois (30 jours)</h4>
+        <div class="month-stats-table">
+          <div class="month-stats-head">
+            <span>Membre</span><span>km</span><span>Jours</span><span>Conduite</span><span>Max</span>
+          </div>
+          ${monthStats.map((r) => `
+          <div class="month-stats-row">
+            <span style="color:${r.color};font-weight:700">${r.name}</span>
+            <span>${r.distance_km}</span>
+            <span>${r.active_days}</span>
+            <span>${r.driving_km} km</span>
+            <span>${r.max_speed_kmh} km/h</span>
+          </div>`).join('')}
+        </div>
       </div>` : ''}
 
       <div class="admin-section">
@@ -1560,4 +1596,44 @@ async function createShareLink() {
     showToast('🔗 Lien créé', 'Partageable 24h — visible dans votre profil', 'ok');
     await loadShareLinks();
   } catch (err) { showToast('Erreur', err.message); }
+}
+
+// ── CSV Export ────────────────────────────────────────────────────────────────
+async function exportTripsCsv(userId, from, to, memberName) {
+  try {
+    const trips = await API.get(`/api/history?userId=${userId}&from=${from}&to=${to}`);
+    if (!trips.length) { showToast('Aucun trajet', 'Pas de données à exporter'); return; }
+
+    const lines = [
+      ['Date', 'Départ', 'Arrivée', 'Durée (min)', 'Distance (km)', 'Vitesse moy (km/h)', 'Vitesse max (km/h)', 'Points GPS'].join(';'),
+    ];
+
+    for (const t of trips) {
+      const date    = new Date(t.started_at).toLocaleDateString('fr-FR');
+      const depart  = new Date(t.started_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      const arrivee = new Date(t.ended_at).toLocaleTimeString('fr-FR',   { hour: '2-digit', minute: '2-digit' });
+      const durMin  = Math.round((new Date(t.ended_at) - new Date(t.started_at)) / 60_000);
+      lines.push([date, depart, arrivee, durMin, t.distance_km, t.avg_speed_kmh, t.max_speed_kmh || 0, t.point_count].join(';'));
+    }
+
+    const csv  = '﻿' + lines.join('\r\n'); // BOM for Excel
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `trajets_${memberName}_${from}_${to}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('⬇️ CSV exporté', `${trips.length} trajet${trips.length > 1 ? 's' : ''}`);
+  } catch (err) {
+    showToast('Erreur export', err.message);
+  }
+}
+
+// ── Monthly stats (admin) ─────────────────────────────────────────────────────
+async function loadMonthStats() {
+  try {
+    const rows = await API.get('/api/history/stats/month');
+    return rows;
+  } catch { return []; }
 }

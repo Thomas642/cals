@@ -22,6 +22,12 @@ const GeoModule = (() => {
   let drivingMode          = false;
   let drivingStopTimer     = null;
   let preDrivingIntervalSec = null;
+
+  // Battery saver
+  let batterySaverActive    = false;
+  const BATTERY_SAVER_ON    = 0.20; // < 20%
+  const BATTERY_SAVER_OFF   = 0.25; // > 25%
+  const BATTERY_SAVER_SEC   = 120;
   const DRIVING_ON_KMH     = 20;  // speed to enter driving mode
   const DRIVING_OFF_KMH    = 5;   // speed to start exit countdown
   const DRIVING_OFF_DELAY  = 60_000; // 1 min of slow speed to exit
@@ -163,7 +169,21 @@ const GeoModule = (() => {
     let battery = null;
     try {
       const nav = await navigator.getBattery?.();
-      if (nav) battery = Math.round(nav.level * 100);
+      if (nav) {
+        battery = Math.round(nav.level * 100);
+        // Battery saver: drop to 120s when below 20%, restore above 25%
+        if (!drivingMode) {
+          if (nav.level < BATTERY_SAVER_ON && !batterySaverActive) {
+            batterySaverActive = true;
+            intervalSec = BATTERY_SAVER_SEC;
+            document.dispatchEvent(new CustomEvent('battery-saver', { detail: { active: true, level: battery } }));
+          } else if (nav.level >= BATTERY_SAVER_OFF && batterySaverActive) {
+            batterySaverActive = false;
+            intervalSec = parseInt(localStorage.getItem('ft_interval')) || 30;
+            document.dispatchEvent(new CustomEvent('battery-saver', { detail: { active: false, level: battery } }));
+          }
+        }
+      }
     } catch {}
 
     try {

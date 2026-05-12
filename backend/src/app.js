@@ -217,6 +217,16 @@ async function runMigrations() {
 
     // Cleanup expired share tokens
     await pool.query(`DELETE FROM share_tokens WHERE expires_at < NOW()`);
+
+    // Zone presence tracking (for auto check-in)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS zone_presence (
+            zone_id    UUID NOT NULL REFERENCES zones(id)  ON DELETE CASCADE,
+            user_id    UUID NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
+            entered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (zone_id, user_id)
+        )
+    `);
 }
 
 // ── Start ────────────────────────────────────────────────────────────────────
