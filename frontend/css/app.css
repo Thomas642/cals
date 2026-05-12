@@ -940,6 +940,30 @@ hr[style*="border-color:var(--border)"] { opacity: .6; }
 .month-stats-row { border-bottom: 1px solid var(--border); }
 .month-stats-row:last-child { border-bottom: none; }
 
+/* ─── Zone list row ─────────────────────────────────────────────────────────── */
+.zone-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .5rem 0; border-bottom: 1px solid var(--border);
+}
+.zone-row:last-child { border-bottom: none; }
+
+/* ─── Alert history ──────────────────────────────────────────────────────────── */
+.alert-filter-chips { display: flex; gap: .35rem; flex-wrap: wrap; margin-bottom: .75rem; }
+.alert-filter-chip {
+  padding: .25rem .65rem; border-radius: 999px; font-size: .74rem; font-weight: 600;
+  border: 1.5px solid var(--border); background: var(--surface2); color: var(--text-muted);
+  cursor: pointer; transition: all .15s; font-family: var(--font);
+}
+.alert-filter-chip:hover { border-color: var(--border2); color: var(--text-2); }
+.alert-filter-chip.active { border-color: var(--primary); background: rgba(99,102,241,.12); color: var(--primary-l); }
+
+.alert-hist-row {
+  display: flex; align-items: flex-start; gap: .6rem;
+  padding: .55rem 0; border-bottom: 1px solid var(--border);
+}
+.alert-hist-row:last-child { border-bottom: none; }
+.alert-hist-icon { font-size: 1.1rem; flex-shrink: 0; margin-top: .05rem; }
+
 /* ─── Crash warning overlay ─────────────────────────────────────────────────── */
 .crash-overlay {
   position: fixed; inset: 0; z-index: 9999;
