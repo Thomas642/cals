@@ -161,9 +161,25 @@ const NavigationModule = (() => {
   function centerOnUser(animate = false) {
     const here = GeoModule.getCurrentLatLng();
     if (!here || !map) return;
-    map.setView(here, 17, { animate });
+    panToUserOffset(here, animate, 17);
     updateUserArrow(here);
     applyBearing();
+  }
+
+  // Waze-style centering : put the user at ~75% from the top of the viewport
+  // so that the road ahead occupies the upper 2/3 of the screen.
+  function panToUserOffset(latlng, animate, zoom) {
+    const targetZoom = zoom !== undefined ? zoom : map.getZoom();
+    if (map.getZoom() !== targetZoom) {
+      // Zoom change needs setView first; followup pan will be precise once at the new zoom.
+      map.setView(latlng, targetZoom, { animate });
+    }
+    const size = map.getSize();
+    const userPoint = map.latLngToContainerPoint(latlng);
+    // Lift the map by 25% of the viewport height so the user lands 75% down.
+    const newCenterPoint = L.point(userPoint.x, userPoint.y - size.y * 0.25);
+    const newCenter = map.containerPointToLatLng(newCenterPoint);
+    map.panTo(newCenter, { animate, duration: 0.5 });
   }
 
   // Rotate the map so the user's heading is always "up" on screen (Waze-style).
@@ -296,7 +312,7 @@ const NavigationModule = (() => {
     // Update directional arrow & re-center if follow mode is on
     updateUserArrow(here);
     if (followMode) {
-      map.panTo(here, { animate: true, duration: 0.5 });
+      panToUserOffset(here, true);   // Waze-style : user at 75% from top
       applyBearing();
     }
 
