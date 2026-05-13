@@ -24,6 +24,7 @@ const { startWatchdog } = require('./services/watchdog');
 const placesRoutes = require('./routes/places');
 const routingRoutes = require('./routes/routing');
 const adminRoutes   = require('./routes/admin');
+const drivingRoutes = require('./routes/driving');
 
 // ── Web Push setup ───────────────────────────────────────────────────────────
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
@@ -143,6 +144,7 @@ app.use('/api/places',   apiLimiter, placesRoutes);
 app.use('/api/schedule', apiLimiter, scheduleRoutes);
 app.use('/api/routing',  apiLimiter, routingRoutes);
 app.use('/api/admin',    apiLimiter, adminRoutes);
+app.use('/api/driving',  apiLimiter, drivingRoutes);
 
 // VAPID public key (needed by the frontend to subscribe to push)
 app.get('/api/push-key', (_, res) => {
@@ -340,6 +342,24 @@ async function runMigrations() {
     `);
     await pool.query(`
         CREATE INDEX IF NOT EXISTS audit_log_created_idx ON audit_log(created_at DESC)
+    `);
+
+    // Driving incidents (Life360-style hard brake / accel / speeding / sharp turn)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS driving_incidents (
+            id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            incident_type VARCHAR(20) NOT NULL,
+            severity      SMALLINT NOT NULL DEFAULT 1,
+            speed_kmh     FLOAT,
+            location      GEOGRAPHY(Point, 4326),
+            recorded_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CHECK (incident_type IN ('hard_brake','hard_accel','speeding','sharp_turn'))
+        )
+    `);
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS driving_incidents_user_idx
+            ON driving_incidents(user_id, recorded_at DESC)
     `);
 }
 

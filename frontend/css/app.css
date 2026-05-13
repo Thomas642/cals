@@ -385,6 +385,84 @@ html, body {
 }
 .health-card .text-muted { font-size: .72rem; }
 
+/* ─── Driving report (Life360-style) ───────────────────────────────────── */
+.driving-tabs {
+  display: flex; gap: .35rem;
+  margin-bottom: .8rem;
+}
+.driving-tab {
+  flex: 1;
+  background: var(--surface2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  padding: .5rem .85rem;
+  font-size: .82rem; font-weight: 600;
+  cursor: pointer;
+}
+.driving-tab.active {
+  background: linear-gradient(135deg, #6366f1, #a855f7);
+  color: #fff;
+  border-color: transparent;
+}
+.driving-counters {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: .4rem;
+  margin-bottom: .8rem;
+}
+.driving-counter {
+  border-radius: 12px;
+  padding: .6rem .35rem;
+  text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: .15rem;
+}
+.driving-counter-val {
+  font-size: 1.6rem; font-weight: 900; line-height: 1;
+}
+.driving-counter-label {
+  font-size: .68rem; font-weight: 600;
+  opacity: .9;
+}
+.driving-global {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: .4rem;
+  margin-bottom: .5rem;
+}
+.driving-global-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: .5rem .55rem;
+  display: flex; align-items: center; gap: .45rem;
+}
+.driving-global-icon {
+  font-size: 1.4rem; line-height: 1;
+}
+.driving-global-val {
+  font-size: 1.05rem; font-weight: 800; line-height: 1; color: var(--text);
+}
+.driving-global-label {
+  font-size: .68rem; color: var(--text-muted);
+  margin-top: .15rem;
+}
+.driving-member-card {
+  display: flex; align-items: center; gap: .65rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: .6rem .75rem;
+  margin-bottom: .4rem;
+}
+.driving-member-avatar {
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; font-size: .82rem;
+  flex-shrink: 0;
+}
+
 /* ─── Skeleton loaders (shimmer placeholder while data is loading) ─────────── */
 @keyframes ft-shimmer {
   0%   { background-position: -200% 0; }
