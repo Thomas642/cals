@@ -182,13 +182,29 @@ const NavigationModule = (() => {
     map.panTo(newCenter, { animate, duration: 0.5 });
   }
 
-  // Rotate the map so the user's heading is always "up" on screen (Waze-style).
-  // Requires the leaflet-rotate plugin (map.setBearing). Falls back to no-op.
+  // Rotate the map so the route AHEAD is always "up" on screen (Waze-style).
+  // Prefers the bearing from the user's current position to the next maneuver
+  // (or the destination if all steps done), which makes the road ahead point
+  // up even when the user is stationary. Falls back to GPS heading.
+  // Requires the leaflet-rotate plugin (map.setBearing). No-op without it.
   function applyBearing() {
     if (!rotateMap || !map || typeof map.setBearing !== 'function') return;
-    // Smooth out by snapping to nearest 5°
-    const target = Math.round(-lastHeading / 5) * 5;
-    map.setBearing(target);
+
+    let heading = lastHeading;
+    const here = GeoModule.getCurrentLatLng();
+
+    // Find the next "anchor" we want the camera to look toward.
+    const nextStep = steps[currentStep];
+    let target = nextStep?.maneuver?.location;     // [lng, lat]
+    if (!target && destination) target = [destination.lng, destination.lat];
+
+    if (here && target) {
+      const b = bearing(here[0], here[1], target[1], target[0]);
+      if (Number.isFinite(b)) heading = b;
+    }
+
+    // Snap to 5° to avoid jittery rotations from GPS noise
+    map.setBearing(Math.round(-heading / 5) * 5);
   }
 
   function updateUserArrow(latlng) {
