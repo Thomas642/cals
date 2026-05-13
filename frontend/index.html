@@ -14,6 +14,12 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
+  <!-- Preload critical assets so the browser fetches them in parallel with HTML parsing -->
+  <link rel="preload" href="/vendor/leaflet.css" as="style">
+  <link rel="preload" href="/css/app.css?v=26" as="style">
+  <link rel="preload" href="/vendor/leaflet.js" as="script">
+  <link rel="preload" href="/js/app.js?v=26" as="script">
+
   <!-- Premium font -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,13 +27,13 @@
 
   <!-- Leaflet (vendored for offline/native use) -->
   <link rel="stylesheet" href="/vendor/leaflet.css">
-  <script src="/vendor/leaflet.js"></script>
+  <script src="/vendor/leaflet.js" defer></script>
 
   <!-- Leaflet.heat (vendored for offline/native use) -->
-  <script src="/vendor/leaflet-heat.js"></script>
+  <script src="/vendor/leaflet-heat.js" defer></script>
 
   <!-- Leaflet-rotate plugin (Waze-like map rotation during navigation) -->
-  <script src="/vendor/leaflet-rotate.js"></script>
+  <script src="/vendor/leaflet-rotate.js" defer></script>
 
   <!-- Socket.io: loaded from server in browser, from production URL in Capacitor -->
   <script>
@@ -635,16 +641,16 @@
 <!-- Toast container -->
 <div id="toastContainer"></div>
 
-<script src="/js/api.js?v=25"></script>
-<script src="/js/visual.js?v=25"></script>
-<script src="/js/auth.js?v=25"></script>
-<script src="/js/map.js?v=25"></script>
-<script src="/js/geolocation.js?v=25"></script>
-<script src="/js/notifications.js?v=25"></script>
-<script src="/js/routing.js?v=25"></script>
-<script src="/js/navigation.js?v=25"></script>
-<script src="/js/update-check.js?v=25"></script>
-<script src="/js/app.js?v=25"></script>
+<script src="/js/api.js?v=26"></script>
+<script src="/js/visual.js?v=26"></script>
+<script src="/js/auth.js?v=26"></script>
+<script src="/js/map.js?v=26"></script>
+<script src="/js/geolocation.js?v=26"></script>
+<script src="/js/notifications.js?v=26"></script>
+<script src="/js/routing.js?v=26"></script>
+<script src="/js/navigation.js?v=26"></script>
+<script src="/js/update-check.js?v=26"></script>
+<script src="/js/app.js?v=26"></script>
 <!-- /js/admin.js + /js/history.js + /js/chat.js lazy-loaded on first nav click -->
 <!-- (saves ~870 lines of parse at boot for casual users) -->
 <!-- /js/admin.js is lazy-loaded by app.js on the first Admin nav click -->
