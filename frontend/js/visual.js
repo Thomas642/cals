@@ -60,3 +60,8 @@ if (document.readyState === 'loading') {
 } else {
   setTimeout(Visual.hideSplash, 300);
 }
+
+// Safety net : force the splash to hide after 5s no matter what.
+// Prevents 'black screen forever' if the normal hide path fails (plugin
+// missing on the installed APK, JS error during boot, etc.).
+setTimeout(Visual.hideSplash, 5000);
