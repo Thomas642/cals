@@ -79,8 +79,18 @@ function setupHistory() {
         document.getElementById('weekStatsContainer').classList.add('hidden');
         document.getElementById('timelineContainer').classList.add('hidden');
         document.getElementById('routinesContainer')?.classList.add('hidden');
+        document.getElementById('drivingContainer')?.classList.add('hidden');
         document.getElementById('tripList').innerHTML = '';
         await loadMonthRanking();
+        return;
+      } else if (btn.dataset.shortcut === 'driving') {
+        document.getElementById('drivingContainer')?.classList.remove('hidden');
+        document.getElementById('rankingContainer')?.classList.add('hidden');
+        document.getElementById('weekStatsContainer').classList.add('hidden');
+        document.getElementById('timelineContainer').classList.add('hidden');
+        document.getElementById('routinesContainer')?.classList.add('hidden');
+        document.getElementById('tripList').innerHTML = '';
+        await loadDrivingReport('week');
         return;
       }
       document.getElementById('weekStatsContainer').classList.add('hidden');
@@ -235,3 +245,118 @@ function renderTripList(trips, userId) {
     card.addEventListener('touchend',  () => clearTimeout(holdTimer));
   });
 }
+
+// ── Driving report (Life360-style) ─────────────────────────────────────────
+async function loadDrivingReport(period = 'week') {
+  const container = document.getElementById('drivingContainer');
+  if (!container) return;
+  container.innerHTML = `
+    <div class="skeleton skeleton-line" style="width:40%"></div>
+    <div class="skeleton-row"><div class="skeleton skeleton-avatar"></div><div class="skeleton-body"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div></div></div>
+    <div class="skeleton-row"><div class="skeleton skeleton-avatar"></div><div class="skeleton-body"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div></div></div>`;
+
+  try {
+    const data = await API.get(`/api/driving/report?period=${period}`);
+    renderDrivingReport(data, period);
+  } catch (err) {
+    container.innerHTML = `<p style="color:#ef4444">Erreur : ${err.message}</p>`;
+  }
+}
+
+function renderDrivingReport(data, period) {
+  const container = document.getElementById('drivingContainer');
+  const totals = data.members.reduce(
+    (acc, m) => ({
+      hard_brake:  acc.hard_brake  + m.hard_brake,
+      hard_accel:  acc.hard_accel  + m.hard_accel,
+      speeding:    acc.speeding    + m.speeding,
+      sharp_turn:  acc.sharp_turn  + m.sharp_turn,
+    }),
+    { hard_brake: 0, hard_accel: 0, speeding: 0, sharp_turn: 0 }
+  );
+
+  container.innerHTML = `
+    <h3 style="font-size:1.05rem;font-weight:800;margin:.5rem 0 .8rem 0;text-align:center">
+      Rapport de conduite ${period === 'week' ? 'hebdomadaire' : 'mensuel'}
+    </h3>
+
+    <div class="driving-tabs">
+      <button class="driving-tab ${period === 'week' ? 'active' : ''}" data-period="week">Cette semaine</button>
+      <button class="driving-tab ${period === 'month' ? 'active' : ''}" data-period="month">30 jours</button>
+    </div>
+
+    <div class="driving-counters">
+      <div class="driving-counter" style="background:rgba(239,68,68,.12);color:#f87171">
+        <span class="driving-counter-val">${totals.hard_brake}</span>
+        <span class="driving-counter-label">🛑 Freinages</span>
+      </div>
+      <div class="driving-counter" style="background:rgba(59,130,246,.12);color:#60a5fa">
+        <span class="driving-counter-val">${totals.hard_accel}</span>
+        <span class="driving-counter-label">⚡ Accélérations</span>
+      </div>
+      <div class="driving-counter" style="background:rgba(245,158,11,.12);color:#fbbf24">
+        <span class="driving-counter-val">${totals.speeding}</span>
+        <span class="driving-counter-label">⚠️ Excès</span>
+      </div>
+      <div class="driving-counter" style="background:rgba(168,85,247,.12);color:#c084fc">
+        <span class="driving-counter-val">${totals.sharp_turn}</span>
+        <span class="driving-counter-label">↪️ Virages</span>
+      </div>
+    </div>
+
+    <div class="driving-global">
+      <div class="driving-global-card">
+        <div class="driving-global-icon">🏁</div>
+        <div>
+          <div class="driving-global-val">${data.global.max_speed_kmh}</div>
+          <div class="driving-global-label">km/h max</div>
+        </div>
+      </div>
+      <div class="driving-global-card">
+        <div class="driving-global-icon">📏</div>
+        <div>
+          <div class="driving-global-val">${data.global.total_km}</div>
+          <div class="driving-global-label">km parcourus</div>
+        </div>
+      </div>
+      <div class="driving-global-card">
+        <div class="driving-global-icon">👥</div>
+        <div>
+          <div class="driving-global-val">${data.global.active_drivers}</div>
+          <div class="driving-global-label">conducteurs</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:.8rem">
+      ${data.members.filter((m) => m.total_incidents > 0 || data.global.active_drivers > 0).map((m) => {
+        const initials = m.name.slice(0, 2).toUpperCase();
+        const avatar = m.avatar_url
+          ? `<img src="${m.avatar_url}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`
+          : initials;
+        return `
+        <div class="driving-member-card">
+          <div class="driving-member-avatar" style="background:${m.color}">${avatar}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:.95rem">${m.name}</div>
+            <div style="font-size:.78rem;color:var(--text-muted);margin-top:.15rem">
+              ${m.total_incidents > 0
+                ? `🛡️ ${m.total_incidents} situation${m.total_incidents > 1 ? 's' : ''} dangereuse${m.total_incidents > 1 ? 's' : ''}`
+                : '✅ Conduite exemplaire'}
+            </div>
+          </div>
+          <div style="display:flex;gap:.3rem;font-size:.7rem;color:var(--text-muted)">
+            ${m.hard_brake > 0  ? `<span title="Freinages">🛑${m.hard_brake}</span>` : ''}
+            ${m.hard_accel > 0  ? `<span title="Accélérations">⚡${m.hard_accel}</span>` : ''}
+            ${m.speeding > 0    ? `<span title="Excès">⚠️${m.speeding}</span>` : ''}
+            ${m.sharp_turn > 0  ? `<span title="Virages">↪️${m.sharp_turn}</span>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  container.querySelectorAll('.driving-tab').forEach((tab) => {
+    tab.addEventListener('click', () => loadDrivingReport(tab.dataset.period));
+  });
+}
+

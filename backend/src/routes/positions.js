@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { checkGeofences } = require('../services/geofence');
+const { detectIncidents } = require('./driving');
 
 const router = express.Router();
 
@@ -43,6 +44,9 @@ router.post('/', authenticate, async (req, res) => {
 
     // Async geofence check — don't block the response
     checkGeofences(req.user.id, latitude, longitude, req.app.get('io')).catch(console.error);
+
+    // Async driving incident detection (Life360-style)
+    detectIncidents(req.user.id, speed ?? 0, latitude, longitude, rows[0].recorded_at).catch(console.error);
 
     res.status(201).json(rows[0]);
 });
