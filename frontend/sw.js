@@ -1,21 +1,26 @@
 // ── Service Worker — Family Tracker ─────────────────────────────────────────
 // Versioned cache (bump on each frontend release that touches assets).
-const VERSION    = 'v10';
+const VERSION    = 'v26';
 const CACHE_NAME = `family-tracker-${VERSION}`;
 
-// Static shell assets. Versioned URL query strings (?v=...) are NOT included
-// here: we cache them by full URL when first requested, the SW just makes
-// sure stale versions are evicted.
+// Static shell assets pre-cached at install time. Versioned URL query strings
+// (?v=...) are NOT included here — they're cached on-demand via SWR.
+// Only stable URLs go here so the precache doesn't repeatedly bust itself.
 const PRECACHE_URLS = [
   '/',
   '/index.html',
   '/login.html',
   '/manifest.json',
   '/css/app.css',
+  '/icons/icon.svg',
+  '/icons/icon-72.png',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
+  '/favicon.ico',
   '/vendor/leaflet.css',
   '/vendor/leaflet.js',
+  '/vendor/leaflet-heat.js',
+  '/vendor/leaflet-rotate.js',
 ];
 
 // ── Install: precache the shell ──────────────────────────────────────────────

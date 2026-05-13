@@ -236,9 +236,22 @@ const GeoModule = (() => {
     }, delay);
   }
 
+  // Heartbeat : always send a position at least every 10 min so the server
+  // doesn't think the member went offline. Below this, skip if barely moved.
+  const HEARTBEAT_MS = 10 * 60 * 1000;
+  const SKIP_MOVE_M  = 10;
+  let lastSentAt = 0;
+
   async function sendPosition() {
     if (isPrivate || !lastPosition) return;
     const { latitude, longitude, accuracy, speed } = lastPosition.coords;
+
+    // Skip if barely moved AND last send is recent (not driving)
+    const moved   = lastSentPosition ? distanceM(lastSentPosition, lastPosition.coords) : Infinity;
+    const sinceMs = lastSentAt ? Date.now() - lastSentAt : Infinity;
+    if (moved < SKIP_MOVE_M && sinceMs < HEARTBEAT_MS && !drivingMode) {
+      return;       // ~80% of POSTs skipped when the user is stationary
+    }
 
     let battery = null;
     try {
@@ -267,6 +280,7 @@ const GeoModule = (() => {
         battery,
       });
       lastSentPosition = { latitude, longitude };
+      lastSentAt = Date.now();
     } catch (err) {
       console.warn('[GPS] Send error:', err.message);
     }
