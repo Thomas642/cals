@@ -239,16 +239,21 @@ const NavigationModule = (() => {
   function drawRoute(data) {
     if (routeLayer) map.removeLayer(routeLayer);
     const coords = data.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
-    routeLayer = L.polyline(coords, {
-      color: '#3b82f6', weight: 6, opacity: 0.85, lineJoin: 'round',
-    }).addTo(map);
+    // Waze-style thick purple route, with subtle outer halo for readability
+    routeLayer = L.layerGroup([
+      L.polyline(coords, { color: '#1e1b4b', weight: 14, opacity: 0.55, lineJoin: 'round', lineCap: 'round' }),
+      L.polyline(coords, { color: '#7c3aed', weight: 10, opacity: 1.0, lineJoin: 'round', lineCap: 'round' }),
+    ]).addTo(map);
+    // Expose getBounds on the group so fitBounds still works
+    routeLayer.getBounds = () => L.latLngBounds(coords);
+    routeLayer.getLatLngs = () => coords.map(([lat, lng]) => ({ lat, lng }));
 
     // Marker on the next maneuver location
     if (data.steps?.[0]?.maneuver?.location) {
       const [lng, lat] = data.steps[0].maneuver.location;
       if (arrowMarker) map.removeLayer(arrowMarker);
       arrowMarker = L.circleMarker([lat, lng], {
-        radius: 6, color: '#fff', fillColor: '#3b82f6', fillOpacity: 1, weight: 2,
+        radius: 7, color: '#fff', fillColor: '#7c3aed', fillOpacity: 1, weight: 3,
       }).addTo(map);
     }
 
@@ -354,22 +359,26 @@ const NavigationModule = (() => {
     updateHUD();
   }
 
-  // ── HUD (instruction bar at the bottom) ──────────────────────────────────
+  // ── HUD (Waze-style: big top banner + bottom arrival panel + speedo) ──────
   function showHUD() {
-    let hud = document.getElementById('navHud');
-    if (hud) hud.remove();
-    hud = document.createElement('div');
+    document.getElementById('navHud')?.remove();
+    document.getElementById('navHudBottom')?.remove();
+    document.getElementById('navSpeedo')?.remove();
+
+    // Top banner: big maneuver icon + distance + instruction + voice/stop
+    const hud = document.createElement('div');
     hud.id = 'navHud';
     hud.className = 'nav-hud';
     hud.innerHTML = `
       <div class="nav-hud-icon" id="navHudIcon">⬆️</div>
       <div class="nav-hud-body">
+        <div class="nav-hud-dist" id="navHudDist">—</div>
         <div class="nav-hud-instruction" id="navHudInstruction">Démarrage…</div>
-        <div class="nav-hud-meta" id="navHudMeta">— · —</div>
       </div>
-      <button class="nav-hud-stop" id="navHudVoice" title="${voiceEnabled ? 'Couper la voix' : 'Activer la voix'}">${voiceEnabled ? '🔊' : '🔇'}</button>
-      <button class="nav-hud-stop" id="navHudStop" title="Arrêter">✕</button>
-    `;
+      <div class="nav-hud-actions">
+        <button class="nav-hud-btn" id="navHudVoice" title="${voiceEnabled ? 'Couper la voix' : 'Activer la voix'}">${voiceEnabled ? '🔊' : '🔇'}</button>
+        <button class="nav-hud-btn" id="navHudStop" title="Arrêter">✕</button>
+      </div>`;
     document.body.appendChild(hud);
     document.getElementById('navHudStop').onclick = () => stop();
     document.getElementById('navHudVoice').onclick = (e) => {
@@ -379,6 +388,34 @@ const NavigationModule = (() => {
       e.currentTarget.title = voiceEnabled ? 'Couper la voix' : 'Activer la voix';
       if (!voiceEnabled && window.speechSynthesis) speechSynthesis.cancel();
     };
+
+    // Bottom panel: arrival time · remaining duration · remaining distance
+    const bottom = document.createElement('div');
+    bottom.id = 'navHudBottom';
+    bottom.className = 'nav-hud-bottom';
+    bottom.innerHTML = `
+      <div class="nav-hud-bottom-col">
+        <div class="nav-hud-bottom-val" id="navArrivalTime">—</div>
+        <div class="nav-hud-bottom-label">Arrivée</div>
+      </div>
+      <div class="nav-hud-bottom-col primary">
+        <div class="nav-hud-bottom-val" id="navRemainingTime">—</div>
+        <div class="nav-hud-bottom-label">Durée</div>
+      </div>
+      <div class="nav-hud-bottom-col">
+        <div class="nav-hud-bottom-val" id="navRemainingDist">—</div>
+        <div class="nav-hud-bottom-label">Distance</div>
+      </div>`;
+    document.body.appendChild(bottom);
+
+    // Speedometer bottom-left
+    const speedo = document.createElement('div');
+    speedo.id = 'navSpeedo';
+    speedo.className = 'nav-speedo';
+    speedo.innerHTML = `
+      <div class="nav-speedo-val" id="navSpeedoVal">0</div>
+      <div class="nav-speedo-unit">km/h</div>`;
+    document.body.appendChild(speedo);
   }
 
   // ── Text-to-speech (Web Speech API) ───────────────────────────────────────
@@ -398,39 +435,51 @@ const NavigationModule = (() => {
 
   function hideHUD() {
     document.getElementById('navHud')?.remove();
+    document.getElementById('navHudBottom')?.remove();
+    document.getElementById('navSpeedo')?.remove();
   }
 
   function updateHUD(distToDestOverride = null, arrived = false) {
     const hud = document.getElementById('navHud');
     if (!hud) return;
     const step = steps[currentStep] || {};
+    const here = GeoModule.getCurrentLatLng();
 
+    // — Top banner —
     document.getElementById('navHudIcon').textContent = arrived ? '🏁' : maneuverIcon(step);
 
-    let instruction;
-    if (arrived) {
-      instruction = 'Vous êtes arrivé';
-    } else {
-      const here = GeoModule.getCurrentLatLng();
-      let distM = 0;
-      if (here && step.maneuver?.location) {
-        distM = haversineKm(here[0], here[1], step.maneuver.location[1], step.maneuver.location[0]) * 1000;
-      }
-      instruction = `${distM ? `Dans ${formatDistance(distM)} : ` : ''}${translate(step)}`;
+    let distToManeuverM = 0;
+    if (here && step.maneuver?.location) {
+      distToManeuverM = haversineKm(here[0], here[1], step.maneuver.location[1], step.maneuver.location[0]) * 1000;
     }
-    document.getElementById('navHudInstruction').textContent = instruction;
+    document.getElementById('navHudDist').textContent =
+      arrived ? '🏁' : (distToManeuverM ? formatDistance(distToManeuverM) : '—');
+    document.getElementById('navHudInstruction').textContent =
+      arrived ? 'Vous êtes arrivé' : translate(step);
 
-    const here = GeoModule.getCurrentLatLng();
+    // — Bottom arrival panel —
     let remainingM = totalDistanceM;
     let remainingS = totalDurationS;
     if (here && destination) {
       const distRest = haversineKm(here[0], here[1], destination.lat, destination.lng) * 1000;
-      remainingM = Math.max(remainingM * 0, distRest);
-      // Roughly proportional duration from remaining straight-line vs total straight-line
+      remainingM = distRest;
       remainingS = Math.round(totalDurationS * (distRest / Math.max(1, totalDistanceM)));
     }
-    document.getElementById('navHudMeta').textContent =
-      `${formatDistance(remainingM)} · ${Math.max(1, Math.round(remainingS / 60))} min`;
+    const arrivalDate = new Date(Date.now() + remainingS * 1000);
+    const arrivalTime = arrivalDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const durMin = Math.max(1, Math.round(remainingS / 60));
+    const durStr = durMin >= 60 ? `${Math.floor(durMin / 60)}h ${durMin % 60}` : `${durMin} min`;
+    const arrivalEl = document.getElementById('navArrivalTime');
+    if (arrivalEl) arrivalEl.textContent = arrivalTime;
+    const remTimeEl = document.getElementById('navRemainingTime');
+    if (remTimeEl) remTimeEl.textContent = durStr;
+    const remDistEl = document.getElementById('navRemainingDist');
+    if (remDistEl) remDistEl.textContent = formatDistance(remainingM);
+
+    // — Speedometer (current GPS speed, km/h) —
+    const speedKmh = GeoModule.getCurrentSpeed?.() || 0;
+    const speedoEl = document.getElementById('navSpeedoVal');
+    if (speedoEl) speedoEl.textContent = Math.round(speedKmh);
   }
 
   // ── Utilities ────────────────────────────────────────────────────────────

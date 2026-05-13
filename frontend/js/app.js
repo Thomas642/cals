@@ -868,7 +868,7 @@ function setupHistory() {
   if (!navBtn) return;
   navBtn.addEventListener('click', async () => {
     try {
-      await loadScript('/js/history.js?v=19');
+      await loadScript('/js/history.js?v=20');
       setupHistory();        // history.js redefines this global with the real impl
       navBtn.click();        // re-fire so the panel opens
     } catch (err) {
@@ -1104,7 +1104,7 @@ function setupAdmin() {
   // to the real handler that admin.js has just registered.
   const onFirstClick = async () => {
     try {
-      await loadScript('/js/admin.js?v=19');
+      await loadScript('/js/admin.js?v=20');
       // admin.js declares `function setupAdmin()` which overrides this one
       // in the global scope. Call it to wire the real click handler.
       setupAdmin();
@@ -1229,7 +1229,7 @@ let _chatScriptPromise = null;
 let _chatWired = false;
 
 async function setupChatOpen() {
-  if (!_chatScriptPromise) _chatScriptPromise = loadScript('/js/chat.js?v=19');
+  if (!_chatScriptPromise) _chatScriptPromise = loadScript('/js/chat.js?v=20');
   await _chatScriptPromise;
   // chat.js redefines the globals. Wire panel + socket once.
   if (!_chatWired) {
