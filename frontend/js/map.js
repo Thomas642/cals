@@ -104,10 +104,34 @@ const MapModule = (() => {
       : initials;
     const offlineClass = isOffline ? ' offline' : '';
 
+    // Activity emoji (next to the avatar, Life360-style)
+    const speed = member.speed || 0;
+    let activity = '';
+    if (ageMin > 30)         activity = '🛌';
+    else if (speed >= 40)    activity = '🚗';
+    else if (speed >= 5)     activity = '🚶';
+    else {
+      // Stationary — check if inside a zone (home/work/school)
+      const zoneEmoji = stationaryZoneEmoji(member);
+      if (zoneEmoji) activity = zoneEmoji;
+    }
+    const activityHtml = activity
+      ? `<div class="marker-activity">${activity}</div>` : '';
+
+    // "Here for X min" badge — only when stationary AND zone hit (informative)
+    const hereForMin = computeHereForMin(member);
+    const hereForHtml = (speed < 3 && hereForMin >= 3 && !isOffline)
+      ? `<div class="marker-here-for">📍 Ici ${formatStayDuration(hereForMin)}</div>`
+      : '';
+
     const html = `
       <div class="member-marker${offlineClass}">
-        <div class="marker-avatar" style="border-color:${member.color};color:${member.color}">
-          ${avatarContent}
+        ${hereForHtml}
+        <div class="marker-avatar-wrap">
+          <div class="marker-avatar" style="border-color:${member.color};color:${member.color}">
+            ${avatarContent}
+          </div>
+          ${activityHtml}
         </div>
         <div class="marker-name" style="color:${member.color}">${member.name}${isOffline ? '<span class="marker-offline-badge">⚫</span>' : ''}</div>
         <div class="marker-tail" style="border-top-color:${member.color}"></div>
@@ -116,10 +140,62 @@ const MapModule = (() => {
     return L.divIcon({
       html,
       className: '',
-      iconSize: [60, 70],
-      iconAnchor: [30, 70],
-      popupAnchor: [0, -70],
+      iconSize: [80, 90],
+      iconAnchor: [40, 90],
+      popupAnchor: [0, -90],
     });
+  }
+
+  // ── Helpers for Life360-style marker enrichments ──────────────────────────
+  function stationaryZoneEmoji(member) {
+    if (typeof zones === 'undefined' || !zones?.length) return '';
+    if (!member.latitude || !member.longitude) return '';
+    for (const z of zones) {
+      if (!z.is_active) continue;
+      const distM = haversineKmInline(member.latitude, member.longitude, z.latitude, z.longitude) * 1000;
+      if (distM <= (z.radius || 100)) {
+        const n = (z.name || '').toLowerCase();
+        if (n.includes('maison') || n.includes('home')) return '🏠';
+        if (n.includes('travail') || n.includes('work') || n.includes('bureau')) return '💼';
+        if (n.includes('école') || n.includes('ecole') || n.includes('school')) return '🏫';
+        if (n.includes('sport') || n.includes('gym'))   return '🏋️';
+        return '📍';
+      }
+    }
+    return '';
+  }
+
+  // Lightweight in-module haversine (avoids depending on app.js order)
+  function haversineKmInline(lat1, lon1, lat2, lon2) {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  // Track when each member entered their current spot (for "Ici depuis X min")
+  const _stayStart = new Map();   // memberId → { lat, lng, since }
+  function computeHereForMin(member) {
+    if (!member.id || !member.latitude || !member.longitude) return 0;
+    const tracked = _stayStart.get(member.id);
+    const distM = tracked
+      ? haversineKmInline(member.latitude, member.longitude, tracked.lat, tracked.lng) * 1000
+      : Infinity;
+    if (!tracked || distM > 50) {
+      _stayStart.set(member.id, { lat: member.latitude, lng: member.longitude, since: Date.now() });
+      return 0;
+    }
+    return Math.round((Date.now() - tracked.since) / 60000);
+  }
+
+  function formatStayDuration(min) {
+    if (min < 60) return `${min} min`;
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return m > 0 ? `${h}h ${m}` : `${h}h`;
   }
 
   function buildPopup(m) {
