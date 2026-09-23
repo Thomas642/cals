@@ -29,6 +29,10 @@ backend/
 frontend/
   src/pages/              écrans (section 8)
   src/data/program.js     programme 5 séances (annexe C)
+deploy/
+  install.sh              première installation sur le VPS
+  update.sh / backup.sh   mise à jour, sauvegarde
+  nginx/cals.conf         bloc nginx pour gameone-val.com
 docs/cals-gdd-v2.md       spécification
 ```
 
@@ -47,31 +51,69 @@ Sans clé, l'application reste utilisable ; l'écran Assistant indique qu'il est
 
 Tests backend : `cd backend && npm test`.
 
-## Déploiement (VPS)
+## Déploiement sur le VPS (gameone-val.com)
+
+Cals tourne dans ses propres conteneurs (projet Docker Compose `cals`) et n'écoute qu'en local sur
+`127.0.0.1:8080`. Il ne touche ni aux autres conteneurs ni aux autres sites nginx du VPS
+(dont `famille.gameone-val.com`) : un bloc `server` dédié à `gameone-val.com` est ajouté.
+
+### Prérequis sur le VPS
+
+- Docker + plugin `docker compose`, `git`
+- Mode `nginx` : nginx système et Certbot (`sudo apt install nginx certbot python3-certbot-nginx`)
+- DNS Cloudflare : enregistrements `gameone-val.com` et `www` vers le VPS (ou vers le tunnel)
+
+### Installation (une seule fois)
 
 ```bash
-cp .env.example .env        # renseigner ANTHROPIC_API_KEY (et CLOUDFLARE_TUNNEL_TOKEN si tunnel)
-docker compose up -d --build
-# avec le tunnel Cloudflare Zero Trust :
-docker compose --profile tunnel up -d --build
+curl -fsSL https://raw.githubusercontent.com/Thomas642/cals/MAIN/deploy/install.sh -o install.sh
+MODE=nginx bash install.sh     # nginx système + Certbot
+# ou
+MODE=tunnel bash install.sh    # tunnel Cloudflare Zero Trust
 ```
 
-- Le frontend écoute sur `127.0.0.1:${CALS_HTTP_PORT}` (8080 par défaut), à placer derrière le reverse proxy.
-- Avec le profil `tunnel`, configurer dans Zero Trust le hostname public vers `http://frontend:80`.
-- La clé API n'est lue que par le service `backend` ; elle n'est jamais envoyée au navigateur ni versionnée.
+Le script :
+1. clone le dépôt dans `~/cals` (modifiable avec `APP_DIR=...`) ;
+2. crée `.env` (demande la clé API Anthropic, facultative) ;
+3. construit et démarre les conteneurs, puis vérifie `http://127.0.0.1:8080/api/health` ;
+4. mode `nginx` : demande un identifiant et un mot de passe d'accès, installe
+   `deploy/nginx/cals.conf` dans `/etc/nginx/sites-available/cals`, recharge nginx, lance Certbot ;
+   mode `tunnel` : affiche le « Public Hostname » à ajouter dans Zero Trust ;
+5. programme la sauvegarde quotidienne (cron, 3 h).
 
-### Sauvegarde
+Si le port 8080 est déjà pris sur le VPS : `PORT=8090 MODE=nginx bash install.sh`.
 
-Le journal et les recettes sont stockés dans le volume `cals-data` (`/data/cals.db`).
+### Protection de l'accès
+
+Cals n'a pas de comptes utilisateurs : sans protection, n'importe qui pourrait lire le journal et
+consommer des crédits API via l'assistant.
+- Mode `nginx` : mot de passe HTTP (Basic Auth) sur tout le site, fichier `/etc/nginx/cals.htpasswd`.
+  Changer le mot de passe : `printf 'moi:%s\n' "$(openssl passwd -apr1)" | sudo tee /etc/nginx/cals.htpasswd`
+- Mode `tunnel` : créer une application Cloudflare Access (Zero Trust > Access > Applications >
+  Self-hosted) sur `gameone-val.com`, limitée à ton adresse e-mail.
+
+### Cloudflare et HTTPS (mode nginx)
+
+- Après Certbot, régler Cloudflare > SSL/TLS sur **Full (strict)**.
+- Si Certbot échoue derrière le proxy Cloudflare, passer temporairement les enregistrements DNS
+  `gameone-val.com` et `www` en « DNS only » (nuage gris), relancer
+  `sudo certbot --nginx -d gameone-val.com -d www.gameone-val.com`, puis les repasser en « Proxied ».
+
+### Mise à jour, sauvegarde
 
 ```bash
-# sauvegarde à chaud du fichier SQLite dans le volume
-docker compose exec backend node src/backup.js /data/backups
-# copie hors du conteneur
-docker compose cp backend:/data/backups ./backups
+bash ~/cals/deploy/update.sh    # sauvegarde, git pull, reconstruction, vérification
+bash ~/cals/deploy/backup.sh    # sauvegarde manuelle -> ~/cals/backups (30 dernières conservées)
+docker compose -f ~/cals/docker-compose.yml logs -f backend   # journaux
 ```
 
-À planifier via cron sur l'hôte. Un export JSON complet est aussi disponible dans Réglages (`GET /api/export`).
+Un export JSON complet est aussi disponible dans Réglages (`GET /api/export`).
+
+### Ancien dossier FamilyTracker
+
+Ce dépôt contenait auparavant FamilyTracker. Si un clone de ce dépôt sert encore un site sur le VPS
+(l'ancienne configuration utilisait `/home/ubuntu/FamilyTracker`), **ne pas y faire de `git pull`** :
+il récupérerait Cals à la place de l'ancien code. Cals s'installe dans un dossier séparé (`~/cals`).
 
 ## API
 
