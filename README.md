@@ -133,9 +133,10 @@ Le fournisseur est choisi selon la clé présente dans `.env` (Gemini prioritair
   répondu pour `gemini-2.5-flash` : « no longer available to new users », en recommandant
   `gemini-3.6-flash`. Liste des modèles accessibles avec sa clé :
   `curl -s "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=$KEY"`.
-  Si Google renvoie une erreur temporaire (500/502/503/504) 3 fois de suite, ou si le modèle est
+  Si Google renvoie une erreur temporaire (500/502/503/504) 2 fois de suite, ou si le modèle est
   introuvable (404), l'assistant essaie les modèles de `GEMINI_FALLBACK_MODELS`
-  (défaut `gemini-3.7-flash,gemini-3.8-flash`).
+  (défaut `gemini-3.7-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.8-flash`). Le 23/09/2026, `gemini-3.6-flash`, `gemini-3.7-flash` et
+  `gemini-3.8-flash` ont renvoyé 503 « high demand » en niveau gratuit.
   D'après la page de tarifs Gemini consultée le 23/09/2026, ce modèle figure dans le niveau gratuit, et
   pour ce niveau : « Content used to improve our products » (contenu utilisé par Google pour améliorer
   ses produits) ; en niveau payant : « Content not used to improve our products ». Les questions

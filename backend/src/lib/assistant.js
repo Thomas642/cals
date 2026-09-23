@@ -6,7 +6,7 @@ import { ValidationError } from './validate.js';
 
 const DEFAULT_MODELS = { gemini: 'gemini-3.6-flash', anthropic: 'claude-haiku-4-5' };
 // Modeles Gemini essayes ensuite si le principal est indisponible (5xx) ou introuvable (404).
-const DEFAULT_GEMINI_FALLBACKS = 'gemini-3.7-flash,gemini-3.8-flash';
+const DEFAULT_GEMINI_FALLBACKS = 'gemini-3.7-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.8-flash';
 
 /** Liste ordonnee des modeles Gemini a essayer (principal puis secours, sans doublon). */
 export function geminiModelChain(env = process.env) {
@@ -221,8 +221,9 @@ async function askGemini(args) {
       httpOptions: {
         ...(base ? { baseUrl: base } : {}),
         timeout: 60000,
-        // Erreurs temporaires cote Google : jusqu'a 3 tentatives. Pas de nouvel essai sur 429 (quota).
-        retryOptions: { attempts: 3, initialDelay: 1, maxDelay: 4, httpStatusCodes: [500, 502, 503, 504] },
+        // Erreurs temporaires cote Google : 2 tentatives par modele avant de passer au suivant.
+        // Pas de nouvel essai sur 429 (quota).
+        retryOptions: { attempts: 2, initialDelay: 1, maxDelay: 4, httpStatusCodes: [500, 502, 503, 504] },
       },
     });
     geminiClient.key = clientKey;

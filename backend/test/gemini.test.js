@@ -11,7 +11,7 @@ test('selection du fournisseur', () => {
   assert.equal(resolveProvider({ AI_PROVIDER: 'anthropic', GEMINI_API_KEY: 'g', ANTHROPIC_API_KEY: 'a' }), 'anthropic');
   assert.equal(resolveProvider({ AI_PROVIDER: 'anthropic', GEMINI_API_KEY: 'g' }), null);
   assert.equal(resolveModel('gemini', { GEMINI_MODEL: 'x' }), 'x');
-  assert.deepEqual(geminiModelChain({}), ['gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash']);
+  assert.deepEqual(geminiModelChain({}), ['gemini-3.6-flash', ...'gemini-3.7-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.8-flash'.split(',')]);
   assert.deepEqual(geminiModelChain({ GEMINI_MODEL: 'a', GEMINI_FALLBACK_MODELS: 'b, a ,c' }), ['a', 'b', 'c']);
   assert.deepEqual(geminiModelChain({ GEMINI_FALLBACK_MODELS: '' }), ['gemini-3.6-flash']);
 });
@@ -97,6 +97,6 @@ test('modele de secours quand le principal renvoie 503 a chaque tentative', asyn
   const { askAssistant } = await import('../src/lib/assistant.js');
   const out = await askAssistant({ message: 'q', history: [], foods: [], context: 'ctx' });
   assert.equal(out.answer, 'ok secours');
-  assert.equal(hits.filter((u) => u.includes('gemini-3.6-flash')).length, 3);
+  assert.equal(hits.filter((u) => u.includes('gemini-3.6-flash')).length, 2);
   assert.equal(hits.filter((u) => u.includes('gemini-3.7-flash')).length, 1);
 });
