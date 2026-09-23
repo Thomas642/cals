@@ -366,3 +366,17 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 0.5rem; }
 }
 .nav-logout span { text-align: left; }
 .food-cards .entry-values { flex-wrap: nowrap; flex: none; }
+
+/* Coherence energetique des aliments */
+.badge.coherent { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+.badge.incoherent { background: var(--danger-soft); color: var(--danger); font-weight: 650; }
+.badge.incomplete { background: var(--surface-2); color: var(--muted); }
+.badges { display: inline-flex; gap: 0.3rem; flex-wrap: wrap; }
+.check-summary { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.6rem; }
+.table-wrap td:nth-child(7) { max-width: 240px; }
+.table-wrap td:nth-child(7) .badge { white-space: normal; display: inline-block; line-height: 1.35; }
+.table-wrap td:first-child { min-width: 170px; }
+.table-wrap td:nth-child(7) .badge { border-radius: 8px; }
+@media (min-width: 900px) {
+  .page:has(.table-wrap) { max-width: 1100px; margin-left: calc(var(--sidebar) + max(0px, (100vw - var(--sidebar) - 1100px) / 2)); }
+}

@@ -57,7 +57,7 @@ test('authentification : blocage apres 5 echecs', async () => {
 test('seed : 19 aliments de l annexe A', async () => {
   const { body } = await call('GET', '/foods');
   assert.equal(body.length, 19);
-  assert.equal(body.filter((f) => f.is_estimate).length, 2);
+  assert.equal(body.filter((f) => f.is_estimate).length, 4);
 });
 
 test('onboarding puis cibles calculees', async () => {
@@ -82,7 +82,8 @@ test('journal : ajout depuis la base, valeurs figees', async () => {
   await call('PUT', `/foods/${riz.id}`, { ...riz, kcal: 400 });
   const day = (await call('GET', '/journal?date=2025-06-01')).body;
   assert.equal(day.totals.kcal, 525);
-  assert.equal(day.totals.missing_carbs, 1);
+  assert.equal(day.totals.missing_carbs, 0);
+  assert.equal(day.totals.carbs_g, 116.3); // 150 g x 77,5 g / 100 g (CIQUAL 9100)
 });
 
 test('journal : saisie IA soumise a la meme validation', async () => {
@@ -99,10 +100,10 @@ test('recettes : macros par portion et ajout au journal', async () => {
   const rec = await call('POST', '/recipes', { name: 'Test', servings: 2, tags: 'rapide',
     ingredients: [{ food_id: poulet.id, quantity: 200 }, { food_id: oeuf.id, quantity: 2 }] });
   assert.equal(rec.status, 201);
-  assert.equal(rec.body.total.kcal, 224 + 144);
-  assert.equal(rec.body.per_serving.kcal, 184);
+  assert.equal(rec.body.total.kcal, 220 + 134);
+  assert.equal(rec.body.per_serving.kcal, 177);
   const log = await call('POST', `/recipes/${rec.body.id}/log`, { date: '2025-06-02', servings: 1 });
-  assert.equal(log.body.kcal, 184);
+  assert.equal(log.body.kcal, 177);
   assert.equal(log.body.origin, 'recipe');
   assert.equal((await call('DELETE', `/foods/${poulet.id}`)).status, 409);
 });

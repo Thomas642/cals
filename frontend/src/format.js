@@ -32,3 +32,18 @@ export const ACTIVITY_LABELS = {
 };
 export const GOAL_LABELS = { fat_loss: 'Perte de gras', maintain: 'Maintien', gain: 'Prise de masse' };
 export const INTENSITY_LABELS = { light: 'Légère', moderate: 'Modérée', aggressive: 'Soutenue' };
+
+/**
+ * Coherence energetique d'un aliment : kcal comparees a 4 x P + 4 x G + 9 x L (facteurs d'Atwater).
+ * Ecart tolere : 12 % (ou 5 kcal) pour couvrir fibres, polyols et arrondis d'etiquette.
+ */
+export function energyCheck(f) {
+  if (f.carbs_g === null || f.carbs_g === undefined || f.fat_g === null || f.fat_g === undefined || f.carbs_g === '' || f.fat_g === '') {
+    return { status: 'incomplete' };
+  }
+  const p = Number(f.protein_g) || 0;
+  const atwater = 4 * p + 4 * Number(f.carbs_g) + 9 * Number(f.fat_g);
+  const kcal = Number(f.kcal);
+  const ok = Math.abs(atwater - kcal) <= Math.max(5, 0.12 * kcal);
+  return { status: ok ? 'ok' : 'bad', atwater: Math.round(atwater * 10) / 10 };
+}

@@ -19,9 +19,9 @@ export const EXTRA_FOODS = [
     source: 'Étiquette Marque Repère (Leclerc) ; paquet 240 g = 8 tranches', is_estimate: 0,
   },
   {
-    // Lipides indiques "< 0,5 g/100 g" par CIQUAL : pas de valeur exacte, laisse vide.
+    // Lipides indiques "< 0,5 g/100 g" par CIQUAL : comptes 0, mention conservee dans la source.
     name: 'Tomate cerise, crue',
-    kcal: 31.8, protein_g: 1.31, carbs_g: 5.62, fat_g: null, ref_unit: '100g',
-    source: 'CIQUAL (code 20172) ; lipides < 0,5 g', is_estimate: 0,
+    kcal: 31.8, protein_g: 1.31, carbs_g: 5.62, fat_g: 0, ref_unit: '100g',
+    source: 'CIQUAL (code 20172) ; lipides < 0,5 g (comptés 0)', is_estimate: 0,
   },
 ];
