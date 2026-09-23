@@ -3,6 +3,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p backups
+if ! docker compose ps --status running --services 2>/dev/null | grep -qx backend; then
+  echo "Backend arrete : aucune sauvegarde a faire."
+  exit 0
+fi
 docker compose exec -T backend node src/backup.js /data/backups
 LATEST="$(docker compose exec -T backend sh -c 'ls -1t /data/backups/*.db | head -1' | tr -d '\r')"
 docker compose cp "backend:$LATEST" "backups/$(basename "$LATEST")"
