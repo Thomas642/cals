@@ -13,7 +13,7 @@ La spécification complète est dans [`docs/cals-gdd-v2.md`](docs/cals-gdd-v2.md
 | Frontend | React 19 (SPA, Vite), servi par nginx |
 | Backend | Node.js 22 + Express 5 |
 | Base de données | SQLite (`better-sqlite3`), fichier sur volume Docker |
-| IA | Google Gemini (`gemini-3.8-flash` par défaut) ou Anthropic Claude (`claude-haiku-4-5`), appelé uniquement par le backend |
+| IA | Google Gemini (`gemini-3.6-flash` par défaut) ou Anthropic Claude (`claude-haiku-4-5`), appelé uniquement par le backend |
 | Déploiement | Docker Compose (frontend nginx, backend, volume SQLite, tunnel Cloudflare optionnel) |
 
 ## Arborescence
@@ -129,10 +129,13 @@ Le fournisseur est choisi selon la clé présente dans `.env` (Gemini prioritair
 `AI_PROVIDER=gemini|anthropic`. Sans clé, l'assistant est désactivé et le reste de l'app fonctionne.
 
 - **Gemini** (défaut) : clé à créer sur Google AI Studio (https://aistudio.google.com, « Get API key »).
-  Modèle par défaut `gemini-3.8-flash`, modifiable avec `GEMINI_MODEL`.
+  Modèle par défaut `gemini-3.6-flash`, modifiable avec `GEMINI_MODEL`. Le 23/09/2026, l'API a
+  répondu pour `gemini-2.5-flash` : « no longer available to new users », en recommandant
+  `gemini-3.6-flash`. Liste des modèles accessibles avec sa clé :
+  `curl -s "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=$KEY"`.
   Si Google renvoie une erreur temporaire (500/502/503/504) 3 fois de suite, ou si le modèle est
   introuvable (404), l'assistant essaie les modèles de `GEMINI_FALLBACK_MODELS`
-  (défaut `gemini-2.5-flash`, également listé dans le niveau gratuit le 23/09/2026).
+  (défaut `gemini-3.7-flash,gemini-3.8-flash`).
   D'après la page de tarifs Gemini consultée le 23/09/2026, ce modèle figure dans le niveau gratuit, et
   pour ce niveau : « Content used to improve our products » (contenu utilisé par Google pour améliorer
   ses produits) ; en niveau payant : « Content not used to improve our products ». Les questions

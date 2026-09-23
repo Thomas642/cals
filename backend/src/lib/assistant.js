@@ -4,9 +4,9 @@ import Anthropic from '@anthropic-ai/sdk';
 import { ApiError as GeminiApiError, GoogleGenAI } from '@google/genai';
 import { ValidationError } from './validate.js';
 
-const DEFAULT_MODELS = { gemini: 'gemini-3.8-flash', anthropic: 'claude-haiku-4-5' };
+const DEFAULT_MODELS = { gemini: 'gemini-3.6-flash', anthropic: 'claude-haiku-4-5' };
 // Modeles Gemini essayes ensuite si le principal est indisponible (5xx) ou introuvable (404).
-const DEFAULT_GEMINI_FALLBACKS = 'gemini-2.5-flash';
+const DEFAULT_GEMINI_FALLBACKS = 'gemini-3.7-flash,gemini-3.8-flash';
 
 /** Liste ordonnee des modeles Gemini a essayer (principal puis secours, sans doublon). */
 export function geminiModelChain(env = process.env) {
