@@ -11,9 +11,9 @@ test('selection du fournisseur', () => {
   assert.equal(resolveProvider({ AI_PROVIDER: 'anthropic', GEMINI_API_KEY: 'g', ANTHROPIC_API_KEY: 'a' }), 'anthropic');
   assert.equal(resolveProvider({ AI_PROVIDER: 'anthropic', GEMINI_API_KEY: 'g' }), null);
   assert.equal(resolveModel('gemini', { GEMINI_MODEL: 'x' }), 'x');
-  assert.deepEqual(geminiModelChain({}), ['gemini-3.8-flash', 'gemini-2.5-flash']);
+  assert.deepEqual(geminiModelChain({}), ['gemini-3.6-flash', ...'gemini-3.7-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.8-flash'.split(',')]);
   assert.deepEqual(geminiModelChain({ GEMINI_MODEL: 'a', GEMINI_FALLBACK_MODELS: 'b, a ,c' }), ['a', 'b', 'c']);
-  assert.deepEqual(geminiModelChain({ GEMINI_FALLBACK_MODELS: '' }), ['gemini-3.8-flash']);
+  assert.deepEqual(geminiModelChain({ GEMINI_FALLBACK_MODELS: '' }), ['gemini-3.6-flash']);
 });
 
 test('requete Gemini : historique, prompt systeme, schema JSON', () => {
@@ -68,7 +68,7 @@ test('bout en bout via le SDK Gemini contre un faux serveur', async (t) => {
   assert.equal(out.proposed_entries[0].kcal, 144);
   assert.equal(out.confidence, 'haute');
   assert.equal(calls, 2);
-  assert.match(received.url, /models\/gemini-3\.8-flash:generateContent/);
+  assert.match(received.url, /models\/gemini-3\.6-flash:generateContent/);
   assert.equal(received.key, 'cle-test');
   assert.equal(received.body.generationConfig.responseMimeType, 'application/json');
   assert.ok(received.body.generationConfig.responseJsonSchema);
@@ -82,7 +82,7 @@ test('modele de secours quand le principal renvoie 503 a chaque tentative', asyn
     req.on('end', () => {
       hits.push(req.url);
       res.setHeader('Content-Type', 'application/json');
-      if (req.url.includes('gemini-3.8-flash')) {
+      if (req.url.includes('gemini-3.6-flash')) {
         res.statusCode = 503;
         res.end(JSON.stringify({ error: { code: 503, message: 'The model is overloaded.', status: 'UNAVAILABLE' } }));
         return;
@@ -97,6 +97,6 @@ test('modele de secours quand le principal renvoie 503 a chaque tentative', asyn
   const { askAssistant } = await import('../src/lib/assistant.js');
   const out = await askAssistant({ message: 'q', history: [], foods: [], context: 'ctx' });
   assert.equal(out.answer, 'ok secours');
-  assert.equal(hits.filter((u) => u.includes('gemini-3.8-flash')).length, 3);
-  assert.equal(hits.filter((u) => u.includes('gemini-2.5-flash')).length, 1);
+  assert.equal(hits.filter((u) => u.includes('gemini-3.6-flash')).length, 2);
+  assert.equal(hits.filter((u) => u.includes('gemini-3.7-flash')).length, 1);
 });

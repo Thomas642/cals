@@ -26,9 +26,21 @@ test('cibles fat_loss moderate', () => {
   assert.equal(t.bmr, 1780);
   assert.equal(t.tdee, 2759);
   assert.equal(t.target_kcal, Math.round(1780 * 1.55 * 0.85));
-  assert.equal(t.target_protein_g, 160);
-  assert.equal(t.target_fat_g, 72);
-  assert.equal(t.target_carbs_g, Math.round((t.target_kcal - 160 * 4 - 72 * 9) / 4));
+  assert.equal(t.target_protein_g, 176);
+  assert.equal(t.target_fat_g, 64);
+  assert.equal(t.target_carbs_g, Math.round((t.target_kcal - 176 * 4 - 64 * 9) / 4));
+});
+
+test('cibles : homme 20 ans, 167 cm, 57 kg, intense, fat_loss aggressive', () => {
+  const t = computeTargets({ sex: 'M', birth_date: '2005-11-10', height_cm: 167, weight_kg: 57,
+    activity_level: 'intense', goal: 'fat_loss', goal_intensity: 'aggressive' }, new Date(2026, 8, 23));
+  assert.equal(t.age, 20);
+  assert.equal(t.bmr, 1519);        // 10*57 + 6,25*167 - 5*20 + 5 = 1518,75
+  assert.equal(t.tdee, 2620);       // 1518,75 * 1,725 = 2619,84
+  assert.equal(t.target_kcal, 2096); // 2619,84 * 0,80
+  assert.equal(t.target_protein_g, 125); // 2,2 * 57 = 125,4
+  assert.equal(t.target_fat_g, 46);      // 0,8 * 57 = 45,6
+  assert.equal(t.target_carbs_g, 296);   // (2096 - 500 - 414) / 4 = 295,5
 });
 
 test('nutritionFor : 100g et unite, macros absentes conservees a null', () => {
