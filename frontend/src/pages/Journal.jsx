@@ -89,6 +89,7 @@ export default function Journal({ profile }) {
           </ul>
         ) : <p className="empty">Aucune entrée pour ce jour. Appuyez sur « Ajouter ».</p>}
         {day?.entries.length > 0 && <SaveRoutine date={date} onError={setError} />}
+        {day?.entries.some((e) => e.food_id) && <RecomputeDay date={date} onError={setError} />}
       </section>
     </>
   );
@@ -169,5 +170,26 @@ function SaveRoutine({ date, onError }) {
       <button type="submit">Enregistrer comme routine</button>
       {done && <span className="ok small">Routine créée.</span>}
     </form>
+  );
+}
+
+function RecomputeDay({ date, onError }) {
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  async function run() {
+    if (!confirm('Recalculer les entrées de ce jour saisies depuis la base avec les valeurs actuelles des aliments ?\n(Les saisies libres, IA et recettes ne changent pas.)')) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api.post('/journal/recompute', { date });
+      setMsg(r.updated ? `${r.updated} entrée(s) mise(s) à jour.` : 'Déjà à jour.');
+    } catch (e) { onError(e.message); } finally { setBusy(false); }
+  }
+  return (
+    <div className="recompute">
+      <button className="link" onClick={run} disabled={busy}>Recalculer depuis la base</button>
+      <span className="muted small">Applique les valeurs actuelles des aliments aux entrées de ce jour.</span>
+      {msg && <span className="ok small">{msg}</span>}
+    </div>
   );
 }
