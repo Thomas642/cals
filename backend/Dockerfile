@@ -1,15 +1,18 @@
-FROM node:20-alpine
-
+FROM node:22-bookworm-slim AS deps
 WORKDIR /app
+# Outils de compilation au cas ou le binaire precompile de better-sqlite3 n'est pas telechargeable.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
-COPY package*.json ./
-RUN npm install --omit=dev
-
-COPY src/ ./src/
-COPY scripts/ ./scripts/
-
-RUN mkdir -p /app/uploads
-
+FROM node:22-bookworm-slim
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json ./
+COPY src ./src
+ENV NODE_ENV=production PORT=3000 DB_PATH=/data/cals.db
+RUN mkdir -p /data && chown node:node /data
+VOLUME /data
 EXPOSE 3000
-
-CMD ["node", "src/app.js"]
+USER node
+CMD ["node", "src/server.js"]

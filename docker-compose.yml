@@ -1,65 +1,32 @@
 services:
-  db:
-    image: postgis/postgis:16-3.4
-    container_name: ft_db
+  backend:
+    build: ./backend
     restart: unless-stopped
     environment:
-      POSTGRES_DB:       familytracker
-      POSTGRES_USER:     familytracker
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-haiku-4-5}
     volumes:
-      - db_data:/var/lib/postgresql/data
-      - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U familytracker"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - cals-data:/data
 
-  api:
-    build: ./backend
-    container_name: ft_api
+  frontend:
+    build: ./frontend
     restart: unless-stopped
     depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      NODE_ENV:        production
-      PORT:            3000
-      DB_HOST:         db
-      DB_PORT:         "5432"
-      DB_USER:         familytracker
-      DB_PASSWORD:     ${DB_PASSWORD}
-      DB_NAME:         familytracker
-      JWT_SECRET:      ${JWT_SECRET}
-      JWT_EXPIRES_IN:  30d
-      VAPID_PUBLIC_KEY:  ${VAPID_PUBLIC_KEY}
-      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY}
-      VAPID_EMAIL:       ${VAPID_EMAIL}
-      FRONTEND_URL:    ${FRONTEND_URL}
-      UPLOAD_DIR:      /app/uploads
-    volumes:
-      - uploads:/app/uploads
+      - backend
     ports:
-      - "127.0.0.1:3000:3000"
-    healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health', r => process.exit(r.statusCode === 200 ? 0 : 1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      - "127.0.0.1:${CALS_HTTP_PORT:-8080}:80"
 
-  osrm:
-    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
-    container_name: ft_osrm
+  # Tunnel Cloudflare Zero Trust (optionnel) : docker compose --profile tunnel up -d
+  # Dans le dashboard Zero Trust, faire pointer le hostname public vers http://frontend:80
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
     restart: unless-stopped
-    command: osrm-routed --algorithm mld --max-table-size 10000 /data/region.osrm
-    volumes:
-      - ./osrm-data:/data:ro
-    expose:
-      - "5000"
-    profiles:
-      - routing
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - frontend
 
 volumes:
-  db_data:
-  uploads:
+  cals-data:
