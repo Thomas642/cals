@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { buildGeminiRequest, OUTPUT_SCHEMA, resolveModel, resolveProvider } from '../src/lib/assistant.js';
+import { buildGeminiRequest, geminiModelChain, OUTPUT_SCHEMA, resolveModel, resolveProvider } from '../src/lib/assistant.js';
 
 test('selection du fournisseur', () => {
   assert.equal(resolveProvider({}), null);
@@ -11,6 +11,9 @@ test('selection du fournisseur', () => {
   assert.equal(resolveProvider({ AI_PROVIDER: 'anthropic', GEMINI_API_KEY: 'g', ANTHROPIC_API_KEY: 'a' }), 'anthropic');
   assert.equal(resolveProvider({ AI_PROVIDER: 'anthropic', GEMINI_API_KEY: 'g' }), null);
   assert.equal(resolveModel('gemini', { GEMINI_MODEL: 'x' }), 'x');
+  assert.deepEqual(geminiModelChain({}), ['gemini-3.8-flash', 'gemini-2.5-flash']);
+  assert.deepEqual(geminiModelChain({ GEMINI_MODEL: 'a', GEMINI_FALLBACK_MODELS: 'b, a ,c' }), ['a', 'b', 'c']);
+  assert.deepEqual(geminiModelChain({ GEMINI_FALLBACK_MODELS: '' }), ['gemini-3.8-flash']);
 });
 
 test('requete Gemini : historique, prompt systeme, schema JSON', () => {
@@ -70,4 +73,30 @@ test('bout en bout via le SDK Gemini contre un faux serveur', async (t) => {
   assert.equal(received.body.generationConfig.responseMimeType, 'application/json');
   assert.ok(received.body.generationConfig.responseJsonSchema);
   assert.match(received.body.systemInstruction.parts[0].text, /REGLES DE DONNEES/);
+});
+
+test('modele de secours quand le principal renvoie 503 a chaque tentative', async (t) => {
+  const hits = [];
+  const fake = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      hits.push(req.url);
+      res.setHeader('Content-Type', 'application/json');
+      if (req.url.includes('gemini-3.8-flash')) {
+        res.statusCode = 503;
+        res.end(JSON.stringify({ error: { code: 503, message: 'The model is overloaded.', status: 'UNAVAILABLE' } }));
+        return;
+      }
+      res.end(JSON.stringify({ candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: JSON.stringify({ answer: 'ok secours', confidence: 'moyenne', proposed_entries: [] }) }] } }] }));
+    });
+  }).listen(0);
+  t.after(() => fake.close());
+  process.env.GEMINI_API_KEY = 'cle-test';
+  process.env.GEMINI_BASE_URL = `http://127.0.0.1:${fake.address().port}`;
+  t.after(() => { delete process.env.GEMINI_API_KEY; delete process.env.GEMINI_BASE_URL; });
+  const { askAssistant } = await import('../src/lib/assistant.js');
+  const out = await askAssistant({ message: 'q', history: [], foods: [], context: 'ctx' });
+  assert.equal(out.answer, 'ok secours');
+  assert.equal(hits.filter((u) => u.includes('gemini-3.8-flash')).length, 3);
+  assert.equal(hits.filter((u) => u.includes('gemini-2.5-flash')).length, 1);
 });

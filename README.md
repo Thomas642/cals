@@ -130,6 +130,9 @@ Le fournisseur est choisi selon la clé présente dans `.env` (Gemini prioritair
 
 - **Gemini** (défaut) : clé à créer sur Google AI Studio (https://aistudio.google.com, « Get API key »).
   Modèle par défaut `gemini-3.8-flash`, modifiable avec `GEMINI_MODEL`.
+  Si Google renvoie une erreur temporaire (500/502/503/504) 3 fois de suite, ou si le modèle est
+  introuvable (404), l'assistant essaie les modèles de `GEMINI_FALLBACK_MODELS`
+  (défaut `gemini-2.5-flash`, également listé dans le niveau gratuit le 23/09/2026).
   D'après la page de tarifs Gemini consultée le 23/09/2026, ce modèle figure dans le niveau gratuit, et
   pour ce niveau : « Content used to improve our products » (contenu utilisé par Google pour améliorer
   ses produits) ; en niveau payant : « Content not used to improve our products ». Les questions
