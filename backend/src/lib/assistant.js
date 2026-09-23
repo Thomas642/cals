@@ -5,6 +5,14 @@ import { ApiError as GeminiApiError, GoogleGenAI } from '@google/genai';
 import { ValidationError } from './validate.js';
 
 const DEFAULT_MODELS = { gemini: 'gemini-3.8-flash', anthropic: 'claude-haiku-4-5' };
+// Modeles Gemini essayes ensuite si le principal est indisponible (5xx) ou introuvable (404).
+const DEFAULT_GEMINI_FALLBACKS = 'gemini-2.5-flash';
+
+/** Liste ordonnee des modeles Gemini a essayer (principal puis secours, sans doublon). */
+export function geminiModelChain(env = process.env) {
+  const fallbacks = (env.GEMINI_FALLBACK_MODELS ?? DEFAULT_GEMINI_FALLBACKS).split(',').map((m) => m.trim()).filter(Boolean);
+  return [...new Set([resolveModel('gemini', env), ...fallbacks])];
+}
 
 /** Fournisseur actif : AI_PROVIDER explicite, sinon celui dont la cle est presente. */
 export function resolveProvider(env = process.env) {
@@ -204,9 +212,10 @@ export function buildGeminiRequest({ model, history, userText, foods }) {
 }
 
 async function askGemini(args) {
-  if (!geminiClient) {
-    // GEMINI_BASE_URL : uniquement pour les tests (faux serveur local).
-    const base = process.env.GEMINI_BASE_URL;
+  // GEMINI_BASE_URL : uniquement pour les tests (faux serveur local).
+  const base = process.env.GEMINI_BASE_URL;
+  const clientKey = `${process.env.GEMINI_API_KEY}|${base ?? ''}`;
+  if (!geminiClient || geminiClient.key !== clientKey) {
     geminiClient = new GoogleGenAI({
       apiKey: process.env.GEMINI_API_KEY,
       httpOptions: {
@@ -216,19 +225,24 @@ async function askGemini(args) {
         retryOptions: { attempts: 3, initialDelay: 1, maxDelay: 4, httpStatusCodes: [500, 502, 503, 504] },
       },
     });
+    geminiClient.key = clientKey;
   }
   let response;
-  try {
-    response = await geminiClient.models.generateContent(buildGeminiRequest(args));
-  } catch (err) {
-    console.error(`[assistant] erreur Gemini (${args.model}) :`, err?.status ?? '', err?.message ?? err);
-    if (err instanceof GeminiApiError) {
+  let lastStatus = null;
+  for (const model of geminiModelChain()) {
+    try {
+      response = await geminiClient.models.generateContent(buildGeminiRequest({ ...args, model }));
+      if (model !== args.model) console.error(`[assistant] reponse obtenue avec le modele de secours ${model}`);
+      break;
+    } catch (err) {
+      console.error(`[assistant] erreur Gemini (${model}) :`, err?.status ?? '', err?.message ?? err);
+      if (!(err instanceof GeminiApiError)) throw new AssistantUnavailableError('API Gemini injoignable');
       if (err.status === 429) throw new AssistantUnavailableError('Quota Gemini atteint, reessayer plus tard');
       if (err.status === 400 || err.status === 401 || err.status === 403) throw new AssistantUnavailableError(`Requete ou cle Gemini refusee (${err.status})`);
-      throw new AssistantUnavailableError(`API Gemini indisponible (${err.status}) apres 3 tentatives, reessayer plus tard`);
+      lastStatus = err.status; // 404 ou 5xx : on passe au modele suivant
     }
-    throw new AssistantUnavailableError('API Gemini injoignable');
   }
+  if (!response) throw new AssistantUnavailableError(`API Gemini indisponible (${lastStatus}) sur tous les modeles essayes, reessayer plus tard`);
   const finish = response.candidates?.[0]?.finishReason;
   const usage = response.usageMetadata;
   if (finish === 'SAFETY' || finish === 'PROHIBITED_CONTENT' || finish === 'BLOCKLIST' || response.promptFeedback?.blockReason) {
