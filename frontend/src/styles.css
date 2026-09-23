@@ -382,3 +382,4 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 0.5rem; }
 }
 .recompute { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.6rem; }
 .recompute .link { padding-left: 0; }
+.error-box { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; max-width: 420px; text-align: center; }

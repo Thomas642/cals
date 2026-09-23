@@ -28,7 +28,13 @@ async function request(method, path, body) {
   const data = await res.json().catch(() => null);
   if (!res.ok) {
     if (res.status === 401 && data?.code === 'auth_required') window.dispatchEvent(new Event('cals:unauthorized'));
-    throw new ApiError(data?.error || `Erreur serveur (HTTP ${res.status})`, res.status, data?.code);
+    let message = data?.error;
+    if (!message && res.status === 429) {
+      // 429 sans message JSON : limite appliquee avant Cals (proxy ou Cloudflare).
+      const wait = Number(res.headers.get('retry-after'));
+      message = `Trop de requêtes : accès limité temporairement par le proxy (HTTP 429)${wait > 0 ? `, réessayer dans ${wait} s` : ''}`;
+    }
+    throw new ApiError(message || `Erreur serveur (HTTP ${res.status})`, res.status, data?.code);
   }
   return data;
 }

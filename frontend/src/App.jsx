@@ -68,7 +68,16 @@ export default function App() {
     setAuth((a) => ({ ...a, authenticated: false }));
   }, []);
 
-  if (error) return <div className="center-screen"><p className="alert">Serveur injoignable : {error}</p></div>;
+  if (error) {
+    return (
+      <div className="center-screen">
+        <div className="error-box">
+          <p className="alert">Chargement impossible : {error}</p>
+          <button className="primary" onClick={() => { setError(null); setAuth(undefined); api.clear(); boot(); }}>Réessayer</button>
+        </div>
+      </div>
+    );
+  }
   if (auth === undefined) return <div className="center-screen"><span className="spinner big" aria-label="Chargement" /></div>;
   if (!auth.authenticated) {
     return <Login configured={auth.configured} onLoggedIn={() => { api.clear(); setAuth(undefined); boot(); }} />;
