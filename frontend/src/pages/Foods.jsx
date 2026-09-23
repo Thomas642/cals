@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useDeferredValue, useState } from 'react';
 import { api } from '../api.js';
+import { useApi } from '../hooks/useApi.js';
+import Skeleton from '../components/Skeleton.jsx';
 import { n1, refUnitLabel } from '../format.js';
 import SourceBadge from '../components/SourceBadge.jsx';
 
@@ -7,26 +9,25 @@ const EMPTY = { name: '', kcal: '', protein_g: '', carbs_g: '', fat_g: '', ref_u
 
 export default function Foods() {
   const [q, setQ] = useState('');
-  const [foods, setFoods] = useState([]);
+  const { data: all } = useApi('/foods');
   const [editing, setEditing] = useState(null);
   const [error, setError] = useState(null);
-
-  const load = useCallback(() => api.get(`/foods?q=${encodeURIComponent(q)}`).then(setFoods).catch((e) => setError(e.message)), [q]);
-  useEffect(() => { const t = setTimeout(load, 150); return () => clearTimeout(t); }, [load]);
+  // Filtrage local (la base complete est deja en cache) : resultats instantanes.
+  const query = useDeferredValue(q.trim().toLowerCase());
+  const foods = (all || []).filter((f) => !query || f.name.toLowerCase().includes(query));
 
   async function save(form) {
     setError(null);
     try {
       if (form.id) await api.put(`/foods/${form.id}`, form); else await api.post('/foods', form);
       setEditing(null);
-      load();
     } catch (e) { setError(e.message); }
   }
 
   async function remove(f) {
     if (!confirm(`Supprimer « ${f.name} » ? Les entrées de journal déjà saisies sont conservées.`)) return;
     setError(null);
-    try { await api.del(`/foods/${f.id}`); load(); } catch (e) { setError(e.message); }
+    try { await api.del(`/foods/${f.id}`); } catch (e) { setError(e.message); }
   }
 
   return (
@@ -38,7 +39,28 @@ export default function Foods() {
       {editing && <FoodForm initial={editing} onSave={save} onCancel={() => setEditing(null)} />}
       {error && <p className="alert">{error}</p>}
       <input type="search" placeholder="Rechercher…" value={q} onChange={(e) => setQ(e.target.value)} />
-      <div className="table-wrap">
+      {all && (
+        <ul className="food-cards card">
+          {foods.map((f) => (
+            <li key={f.id} className={f.is_estimate ? 'estimate-row' : ''}>
+              <div className="entry-main">
+                <strong>{f.name}</strong>
+                <span className="muted small">
+                  {n1(f.kcal)} kcal · {n1(f.protein_g)} g P
+                  {f.carbs_g !== null && ` · ${n1(f.carbs_g)} g G`}{f.fat_g !== null && ` · ${n1(f.fat_g)} g L`} {refUnitLabel(f.ref_unit)}
+                </span>
+                <span><SourceBadge estimate={!!f.is_estimate} source={f.source} /></span>
+              </div>
+              <div className="entry-values">
+                <button className="link" onClick={() => setEditing({ ...f, is_estimate: !!f.is_estimate })}>Éditer</button>
+                <button className="link danger" onClick={() => remove(f)}>Suppr.</button>
+              </div>
+            </li>
+          ))}
+          {foods.length === 0 && <li className="empty">Aucun aliment trouvé.</li>}
+        </ul>
+      )}
+      {!all ? <Skeleton lines={8} /> : <div className="table-wrap">
         <table>
           <thead><tr><th>Aliment</th><th>kcal</th><th>Prot.</th><th>Gluc.</th><th>Lip.</th><th>Réf.</th><th>Source</th><th /></tr></thead>
           <tbody>
@@ -55,7 +77,7 @@ export default function Foods() {
             ))}
           </tbody>
         </table>
-      </div>
+      </div>}
       <p className="muted small">« – » : valeur non renseignée (non fournie par la source). Aucune valeur n'est complétée automatiquement.</p>
     </>
   );

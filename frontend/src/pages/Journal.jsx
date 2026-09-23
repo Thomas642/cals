@@ -1,81 +1,94 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { api } from '../api.js';
+import { useApi } from '../hooks/useApi.js';
 import { longDate, n0, n1, shiftDate, todayIso, unitLabel } from '../format.js';
 import Gauge from '../components/Gauge.jsx';
+import Ring from '../components/Ring.jsx';
+import Icon from '../components/Icon.jsx';
+import Skeleton from '../components/Skeleton.jsx';
 import FoodPicker from '../components/FoodPicker.jsx';
 
 const ORIGIN_LABELS = { base: 'base', free: 'libre', recipe: 'recette', ia: 'IA' };
 
 export default function Journal({ profile }) {
   const [date, setDate] = useState(todayIso());
-  const [day, setDay] = useState(null);
+  const { data: day } = useApi(`/journal?date=${date}`);
   const [tab, setTab] = useState('base');
+  const [adding, setAdding] = useState(false);
   const [error, setError] = useState(null);
-
-  const load = useCallback(() => api.get(`/journal?date=${date}`).then(setDay).catch((e) => setError(e.message)), [date]);
-  useEffect(() => { load(); }, [load]);
 
   async function run(fn) {
     setError(null);
-    try { await fn(); await load(); } catch (e) { setError(e.message); }
+    try { await fn(); } catch (e) { setError(e.message); }
   }
 
   const t = day?.totals;
+  const isToday = date === todayIso();
   return (
     <>
       <div className="date-nav">
-        <button onClick={() => setDate(shiftDate(date, -1))} aria-label="Jour précédent">‹</button>
-        <div>
+        <button className="icon-btn" onClick={() => setDate(shiftDate(date, -1))} aria-label="Jour précédent"><Icon name="chevronLeft" /></button>
+        <div className="date-title">
+          <span className="eyebrow">{isToday ? "Aujourd'hui" : 'Journal'}</span>
           <h1>{longDate(date)}</h1>
-          {date !== todayIso() && <button className="link" onClick={() => setDate(todayIso())}>Revenir à aujourd'hui</button>}
+          {!isToday && <button className="link" onClick={() => setDate(todayIso())}>Revenir à aujourd'hui</button>}
         </div>
-        <button onClick={() => setDate(shiftDate(date, 1))} aria-label="Jour suivant">›</button>
+        <button className="icon-btn" onClick={() => setDate(shiftDate(date, 1))} aria-label="Jour suivant"><Icon name="chevronRight" /></button>
       </div>
 
-      {t && (
-        <section className="card gauges">
-          <Gauge label="Calories" value={t.kcal} target={profile.target_kcal} unit="kcal" />
-          <Gauge label="Protéines" value={t.protein_g} target={profile.target_protein_g} unit="g" />
-          <Gauge label="Glucides" value={t.carbs_g} target={profile.target_carbs_g} unit="g" incomplete={t.missing_carbs} />
-          <Gauge label="Lipides" value={t.fat_g} target={profile.target_fat_g} unit="g" incomplete={t.missing_fat} />
+      {!t ? <Skeleton lines={4} /> : (
+        <section className="card summary">
+          <Ring value={t.kcal} target={profile.target_kcal} />
+          <div className="macros">
+            <Gauge label="Protéines" value={t.protein_g} target={profile.target_protein_g} unit="g" tone="protein" />
+            <Gauge label="Glucides" value={t.carbs_g} target={profile.target_carbs_g} unit="g" incomplete={t.missing_carbs} tone="carbs" />
+            <Gauge label="Lipides" value={t.fat_g} target={profile.target_fat_g} unit="g" incomplete={t.missing_fat} tone="fat" />
+          </div>
         </section>
       )}
 
       {error && <p className="alert">{error}</p>}
 
       <section className="card">
-        <h2>Repas du jour</h2>
-        {day?.entries.length ? (
+        <div className="title-row">
+          <h2>Repas du jour</h2>
+          <button className="primary" onClick={() => setAdding(!adding)} aria-expanded={adding}>
+            <Icon name={adding ? 'close' : 'plus'} size={18} /> {adding ? 'Fermer' : 'Ajouter'}
+          </button>
+        </div>
+
+        {adding && (
+          <div className="add-panel">
+            <div className="segmented" role="tablist">
+              {[['base', 'Base'], ['free', 'Libre'], ['recipe', 'Recette'], ['routine', 'Routine']].map(([k, l]) => (
+                <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{l}</button>
+              ))}
+            </div>
+            {tab === 'base' && <FoodPicker onPick={(food, quantity) => run(() => api.post('/journal', { date, food_id: food.id, quantity }))} />}
+            {tab === 'free' && <FreeEntry onAdd={(entry) => run(() => api.post('/journal', { ...entry, date, origin: 'free' }))} />}
+            {tab === 'recipe' && <RecipeAdd onAdd={(id, servings) => run(() => api.post(`/recipes/${id}/log`, { date, servings }))} />}
+            {tab === 'routine' && <RoutineAdd onAdd={(id) => run(() => api.post(`/routines/${id}/log`, { date }))} onError={setError} />}
+          </div>
+        )}
+
+        {!day ? <Skeleton lines={3} card={false} /> : day.entries.length ? (
           <ul className="entries">
             {day.entries.map((e) => (
               <li key={e.id}>
-                <div>
+                <div className="entry-main">
                   <strong>{e.display_name}</strong>
-                  <span className="muted small"> · {n1(e.quantity)} {unitLabel(e.unit, e.quantity)} · {ORIGIN_LABELS[e.origin]}</span>
+                  <span className="muted small">{n1(e.quantity)} {unitLabel(e.unit, e.quantity)} · {ORIGIN_LABELS[e.origin]}</span>
                 </div>
                 <div className="entry-values">
-                  <span>{n0(e.kcal)} kcal</span>
-                  <span className="muted">{n1(e.protein_g)} g P</span>
-                  <button className="icon" aria-label={`Supprimer ${e.display_name}`} onClick={() => run(() => api.del(`/journal/${e.id}`))}>✕</button>
+                  <span className="kcal">{n0(e.kcal)} <small>kcal</small></span>
+                  <span className="pill protein">{n1(e.protein_g)} g P</span>
+                  <button className="icon-btn subtle" aria-label={`Supprimer ${e.display_name}`} onClick={() => run(() => api.del(`/journal/${e.id}`))}><Icon name="close" size={16} /></button>
                 </div>
               </li>
             ))}
           </ul>
-        ) : <p className="muted">Aucune entrée pour ce jour.</p>}
+        ) : <p className="empty">Aucune entrée pour ce jour. Appuyez sur « Ajouter ».</p>}
         {day?.entries.length > 0 && <SaveRoutine date={date} onError={setError} />}
-      </section>
-
-      <section className="card">
-        <h2>Ajouter</h2>
-        <div className="tabs" role="tablist">
-          {[['base', 'Depuis la base'], ['free', 'Saisie libre'], ['recipe', 'Recette'], ['routine', 'Routine']].map(([k, l]) => (
-            <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{l}</button>
-          ))}
-        </div>
-        {tab === 'base' && <FoodPicker onPick={(food, quantity) => run(() => api.post('/journal', { date, food_id: food.id, quantity }))} />}
-        {tab === 'free' && <FreeEntry onAdd={(entry) => run(() => api.post('/journal', { ...entry, date, origin: 'free' }))} />}
-        {tab === 'recipe' && <RecipeAdd onAdd={(id, servings) => run(() => api.post(`/recipes/${id}/log`, { date, servings }))} />}
-        {tab === 'routine' && <RoutineAdd onAdd={(id) => run(() => api.post(`/routines/${id}/log`, { date }))} />}
       </section>
     </>
   );
@@ -105,18 +118,17 @@ function FreeEntry({ onAdd }) {
 }
 
 function RecipeAdd({ onAdd }) {
-  const [recipes, setRecipes] = useState(null);
+  const { data: recipes } = useApi('/recipes');
   const [servings, setServings] = useState('1');
-  useEffect(() => { api.get('/recipes').then(setRecipes).catch(() => setRecipes([])); }, []);
-  if (!recipes) return <p className="muted">Chargement…</p>;
-  if (!recipes.length) return <p className="muted">Aucune recette. Créez-en une dans l'onglet Recettes.</p>;
+  if (!recipes) return <Skeleton lines={2} card={false} />;
+  if (!recipes.length) return <p className="empty">Aucune recette. Créez-en une dans l'onglet Recettes.</p>;
   return (
     <>
       <label>Portions<input inputMode="decimal" value={servings} onChange={(e) => setServings(e.target.value)} /></label>
       <ul className="entries">
         {recipes.map((r) => (
           <li key={r.id}>
-            <div><strong>{r.name}</strong><span className="muted small"> · {n0(r.per_serving.kcal)} kcal · {n1(r.per_serving.protein_g)} g P / portion</span></div>
+            <div className="entry-main"><strong>{r.name}</strong><span className="muted small">{n0(r.per_serving.kcal)} kcal · {n1(r.per_serving.protein_g)} g P / portion</span></div>
             <button onClick={() => onAdd(r.id, Number(servings.replace(',', '.')) || 1)}>Ajouter</button>
           </li>
         ))}
@@ -125,20 +137,18 @@ function RecipeAdd({ onAdd }) {
   );
 }
 
-function RoutineAdd({ onAdd }) {
-  const [routines, setRoutines] = useState(null);
-  const load = () => api.get('/routines').then(setRoutines).catch(() => setRoutines([]));
-  useEffect(() => { load(); }, []);
-  if (!routines) return <p className="muted">Chargement…</p>;
-  if (!routines.length) return <p className="muted">Aucune routine. Enregistrez les entrées d'un jour comme routine.</p>;
+function RoutineAdd({ onAdd, onError }) {
+  const { data: routines } = useApi('/routines');
+  if (!routines) return <Skeleton lines={2} card={false} />;
+  if (!routines.length) return <p className="empty">Aucune routine. Enregistrez les entrées d'un jour comme routine.</p>;
   return (
     <ul className="entries">
       {routines.map((r) => (
         <li key={r.id}>
-          <div><strong>{r.name}</strong><span className="muted small"> · {r.items.length} élément(s) · {n0(r.totals.kcal)} kcal · {n1(r.totals.protein_g)} g P</span></div>
+          <div className="entry-main"><strong>{r.name}</strong><span className="muted small">{r.items.length} élément(s) · {n0(r.totals.kcal)} kcal · {n1(r.totals.protein_g)} g P</span></div>
           <div className="entry-values">
             <button onClick={() => onAdd(r.id)}>Ajouter</button>
-            <button className="icon" aria-label={`Supprimer la routine ${r.name}`} onClick={() => api.del(`/routines/${r.id}`).then(load)}>✕</button>
+            <button className="icon-btn subtle" aria-label={`Supprimer la routine ${r.name}`} onClick={() => api.del(`/routines/${r.id}`).catch((e) => onError(e.message))}><Icon name="close" size={16} /></button>
           </div>
         </li>
       ))}

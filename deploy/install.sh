@@ -81,13 +81,6 @@ curl -fsS "http://127.0.0.1:$PORT/api/health"; echo
 if [[ "$MODE" == "nginx" ]]; then
   say "nginx systeme pour $DOMAIN"
   command -v nginx >/dev/null || fail "nginx absent (sudo apt install nginx)"
-  if [[ ! -f /etc/nginx/cals.htpasswd ]]; then
-    read -rp "Identifiant d'acces a Cals : " AUTH_USER
-    read -rsp "Mot de passe : " AUTH_PASS; echo
-    printf '%s:%s\n' "$AUTH_USER" "$(openssl passwd -apr1 "$AUTH_PASS")" | $SUDO tee /etc/nginx/cals.htpasswd >/dev/null
-    $SUDO chmod 640 /etc/nginx/cals.htpasswd
-    $SUDO chown root:www-data /etc/nginx/cals.htpasswd 2>/dev/null || true
-  fi
   sed -e "s/__CALS_PORT__/$PORT/" -e "s/gameone-val.com www.gameone-val.com/$DOMAIN www.$DOMAIN/" \
     deploy/nginx/cals.conf | $SUDO tee /etc/nginx/sites-available/cals >/dev/null
   $SUDO ln -sf /etc/nginx/sites-available/cals /etc/nginx/sites-enabled/cals
@@ -108,6 +101,14 @@ Dans Cloudflare Zero Trust > Networks > Tunnels > (ton tunnel) > Public Hostname
 Puis proteger l'acces : Zero Trust > Access > Applications > Self-hosted, domaine $DOMAIN,
 politique "Allow" limitee a ton adresse e-mail.
 TXT
+fi
+
+say "Identifiant de connexion a Cals"
+if docker compose exec -T backend node -e "const D=require('better-sqlite3');const d=new D(process.env.DB_PATH);process.exit(d.prepare('SELECT 1 FROM auth_user').get()?0:1)" 2>/dev/null; then
+  echo "Identifiant deja defini (pour le changer : docker compose exec backend node src/set-password.js <identifiant>)."
+else
+  read -rp "Identifiant de connexion : " AUTH_USER
+  docker compose exec backend node src/set-password.js "$AUTH_USER"
 fi
 
 say "Sauvegarde quotidienne (cron, 3 h)"

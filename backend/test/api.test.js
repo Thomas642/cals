@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase, seedFoods } from '../src/db.js';
 import { createApp } from '../src/app.js';
+import { setCredentials } from '../src/lib/auth.js';
 
 delete process.env.ANTHROPIC_API_KEY;
 delete process.env.GEMINI_API_KEY;
@@ -12,16 +13,46 @@ const server = createApp(db).listen(0);
 const base = `http://127.0.0.1:${server.address().port}/api`;
 test.after(() => server.close());
 
-async function call(method, path, body) {
-  const res = await fetch(base + path, {
-    method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined,
-  });
+let cookie = '';
+async function call(method, path, body, { withCookie = true } = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (withCookie && cookie) headers.Cookie = cookie;
+  const res = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const setCookie = res.headers.get('set-cookie');
+  if (setCookie && withCookie) cookie = setCookie.split(';')[0];
   const text = await res.text();
   return { status: res.status, body: text ? JSON.parse(text) : null };
 }
 
 const profile = { username: 'Test', sex: 'M', birth_date: '1995-01-01', height_cm: 180, weight_kg: 80,
   activity_level: 'moderate', goal: 'fat_loss', goal_intensity: 'moderate' };
+
+test('authentification : non configuree, refus, connexion, deconnexion', async () => {
+  assert.deepEqual((await call('GET', '/auth/status')).body, { configured: false, authenticated: false, username: null });
+  assert.equal((await call('GET', '/foods')).status, 401);
+  assert.equal((await call('POST', '/auth/login', { username: 'moi', password: 'motdepasse1' })).status, 503);
+  setCredentials(db, 'moi', 'motdepasse1');
+  assert.equal((await call('POST', '/auth/login', { username: 'moi', password: 'faux-mdp' })).status, 401);
+  const ok = await call('POST', '/auth/login', { username: 'moi', password: 'motdepasse1', remember: true });
+  assert.equal(ok.status, 200);
+  assert.match(cookie, /^cals_session=/);
+  assert.deepEqual((await call('GET', '/auth/status')).body, { configured: true, authenticated: true, username: 'moi' });
+  assert.equal((await call('GET', '/foods')).status, 200);
+  await call('POST', '/auth/logout');
+  cookie = '';
+  assert.equal((await call('GET', '/foods')).status, 401);
+  await call('POST', '/auth/login', { username: 'moi', password: 'motdepasse1' });
+  assert.equal((await call('GET', '/health', undefined, { withCookie: false })).status, 200);
+});
+
+test('authentification : blocage apres 5 echecs', async () => {
+  const other = { withCookie: false };
+  for (let i = 0; i < 4; i += 1) {
+    assert.equal((await call('POST', '/auth/login', { username: 'moi', password: 'x'.repeat(8) }, other)).status, 401);
+  }
+  assert.equal((await call('POST', '/auth/login', { username: 'moi', password: 'x'.repeat(8) }, other)).status, 401);
+  assert.equal((await call('POST', '/auth/login', { username: 'moi', password: 'motdepasse1' }, other)).status, 429);
+});
 
 test('seed : 19 aliments de l annexe A', async () => {
   const { body } = await call('GET', '/foods');
