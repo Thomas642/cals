@@ -1,16 +1,16 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { api } from '../api.js';
+import { useApi } from '../hooks/useApi.js';
 import { n1, shortDate, todayIso } from '../format.js';
 import { PROGRAM, PROGRAM_INTRO } from '../data/program.js';
 
 export default function Training() {
   const [code, setCode] = useState('J1');
-  const [logs, setLogs] = useState([]);
+  const { data } = useApi(`/workouts?day_code=${code}`);
+  const logs = data || [];
   const [error, setError] = useState(null);
   const day = PROGRAM.find((d) => d.code === code);
 
-  const load = useCallback(() => api.get(`/workouts?day_code=${code}`).then(setLogs).catch((e) => setError(e.message)), [code]);
-  useEffect(() => { load(); }, [load]);
 
   const lastFor = (exercise) => logs.find((l) => l.exercise === exercise);
 
@@ -36,7 +36,7 @@ export default function Training() {
                 </div>
                 <LoadForm onSave={async (v) => {
                   setError(null);
-                  try { await api.post('/workouts', { ...v, day_code: code, exercise: name, date: todayIso() }); load(); } catch (e) { setError(e.message); }
+                  try { await api.post('/workouts', { ...v, day_code: code, exercise: name, date: todayIso() }); } catch (e) { setError(e.message); }
                 }} />
               </li>
             );
@@ -53,7 +53,7 @@ export default function Training() {
               <li key={l.id}>
                 <span>{shortDate(l.date)} · {l.exercise}</span>
                 <span className="entry-values">{l.load_kg !== null ? `${n1(l.load_kg)} kg` : '—'} {l.reps}
-                  <button className="icon" aria-label="Supprimer" onClick={() => api.del(`/workouts/${l.id}`).then(load)}>✕</button></span>
+                  <button className="icon" aria-label="Supprimer" onClick={() => api.del(`/workouts/${l.id}`).catch((e) => setError(e.message))}>✕</button></span>
               </li>
             ))}
           </ul>

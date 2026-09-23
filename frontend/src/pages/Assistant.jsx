@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { n1, todayIso, unitLabel } from '../format.js';
 import SourceBadge from '../components/SourceBadge.jsx';
+import Icon from '../components/Icon.jsx';
 import Disclaimer from '../components/Disclaimer.jsx';
 
 const SUGGESTIONS = [
@@ -51,12 +52,12 @@ export default function Assistant({ aiEnabled }) {
         {messages.map((m, i) => (m.role === 'user'
           ? <div key={i} className="bubble user">{m.content}</div>
           : <AssistantBubble key={i} msg={m} date={date} />))}
-        {busy && <div className="bubble assistant muted">Réflexion…</div>}
+        {busy && <div className="bubble assistant muted"><span className="spinner" aria-hidden="true" /> Réflexion…</div>}
       </div>
       {error && <p className="alert">{error} <Link to="/">Passer à la saisie manuelle</Link></p>}
       <form className="row chat-input" onSubmit={(e) => { e.preventDefault(); send(input); }}>
         <input className="grow" placeholder="Posez votre question…" value={input} onChange={(e) => setInput(e.target.value)} maxLength={2000} disabled={!aiEnabled} />
-        <button className="primary" type="submit" disabled={busy || !aiEnabled}>Envoyer</button>
+        <button className="primary" type="submit" disabled={busy || !aiEnabled} aria-label="Envoyer"><Icon name="send" size={18} /></button>
       </form>
       <Disclaimer />
     </>

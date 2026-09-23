@@ -107,3 +107,18 @@ CREATE TABLE IF NOT EXISTS workout_log (
 CREATE INDEX IF NOT EXISTS idx_journal_date ON journal_entry(date);
 CREATE INDEX IF NOT EXISTS idx_weight_date  ON weight_log(date);
 CREATE INDEX IF NOT EXISTS idx_workout_date ON workout_log(date);
+
+-- Authentification (identifiant unique, sessions par cookie).
+CREATE TABLE IF NOT EXISTS auth_user (
+  id            INTEGER PRIMARY KEY CHECK (id = 1),
+  username      TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS auth_session (
+  token_hash  TEXT PRIMARY KEY,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at  TEXT NOT NULL,
+  persistent  INTEGER NOT NULL DEFAULT 1
+);

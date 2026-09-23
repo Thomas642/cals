@@ -80,21 +80,25 @@ Le script :
 1. clone le dépôt dans `~/cals` (modifiable avec `APP_DIR=...`) ;
 2. crée `.env` (demande la clé API Gemini, facultative) ;
 3. construit et démarre les conteneurs, puis vérifie `http://127.0.0.1:8080/api/health` ;
-4. mode `nginx` : demande un identifiant et un mot de passe d'accès, installe
-   `deploy/nginx/cals.conf` dans `/etc/nginx/sites-available/cals`, recharge nginx, lance Certbot ;
+4. mode `nginx` : installe `deploy/nginx/cals.conf` dans `/etc/nginx/sites-available/cals`,
+   recharge nginx, lance Certbot ;
    mode `tunnel` : affiche le « Public Hostname » à ajouter dans Zero Trust ;
-5. programme la sauvegarde quotidienne (cron, 3 h).
+5. demande l'identifiant et le mot de passe de connexion à Cals ;
+6. programme la sauvegarde quotidienne (cron, 3 h).
 
 Si le port 8080 est déjà pris sur le VPS : `PORT=8090 MODE=nginx bash install.sh`.
 
-### Protection de l'accès
+### Connexion
 
-Cals n'a pas de comptes utilisateurs : sans protection, n'importe qui pourrait lire le journal et
-consommer des crédits API via l'assistant.
-- Mode `nginx` : mot de passe HTTP (Basic Auth) sur tout le site, fichier `/etc/nginx/cals.htpasswd`.
-  Changer le mot de passe : `printf 'moi:%s\n' "$(openssl passwd -apr1)" | sudo tee /etc/nginx/cals.htpasswd`
-- Mode `tunnel` : créer une application Cloudflare Access (Zero Trust > Access > Applications >
-  Self-hosted) sur `gameone-val.com`, limitée à ton adresse e-mail.
+Cals affiche son propre écran de connexion (identifiant + mot de passe). Après connexion, une
+session est gardée par cookie sécurisé (`HttpOnly`, `SameSite=Lax`, `Secure` en HTTPS) :
+90 jours avec « Rester connecté », sinon jusqu'à la fermeture du navigateur. Le mot de passe est
+stocké haché (scrypt). 5 échecs depuis une même IP bloquent les tentatives 15 minutes.
+
+```bash
+# définir ou changer l'identifiant et le mot de passe (déconnecte toutes les sessions)
+docker compose -f ~/cals/docker-compose.yml exec backend node src/set-password.js <identifiant>
+```
 
 ### Cloudflare et HTTPS (mode nginx)
 

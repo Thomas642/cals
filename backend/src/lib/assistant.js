@@ -154,6 +154,7 @@ export function parseAssistantOutput(text) {
   try {
     data = JSON.parse(text);
   } catch {
+    console.error('[assistant] JSON invalide recu :', String(text).slice(0, 500));
     throw new AssistantUnavailableError('Reponse IA non conforme (JSON invalide)');
   }
   if (typeof data.answer !== 'string') throw new AssistantUnavailableError('Reponse IA non conforme (answer manquant)');
@@ -206,16 +207,25 @@ async function askGemini(args) {
   if (!geminiClient) {
     // GEMINI_BASE_URL : uniquement pour les tests (faux serveur local).
     const base = process.env.GEMINI_BASE_URL;
-    geminiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, ...(base ? { httpOptions: { baseUrl: base } } : {}) });
+    geminiClient = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        ...(base ? { baseUrl: base } : {}),
+        timeout: 60000,
+        // Erreurs temporaires cote Google : jusqu'a 3 tentatives. Pas de nouvel essai sur 429 (quota).
+        retryOptions: { attempts: 3, initialDelay: 1, maxDelay: 4, httpStatusCodes: [500, 502, 503, 504] },
+      },
+    });
   }
   let response;
   try {
     response = await geminiClient.models.generateContent(buildGeminiRequest(args));
   } catch (err) {
+    console.error(`[assistant] erreur Gemini (${args.model}) :`, err?.status ?? '', err?.message ?? err);
     if (err instanceof GeminiApiError) {
       if (err.status === 429) throw new AssistantUnavailableError('Quota Gemini atteint, reessayer plus tard');
       if (err.status === 400 || err.status === 401 || err.status === 403) throw new AssistantUnavailableError(`Requete ou cle Gemini refusee (${err.status})`);
-      throw new AssistantUnavailableError(`API Gemini indisponible (${err.status})`);
+      throw new AssistantUnavailableError(`API Gemini indisponible (${err.status}) apres 3 tentatives, reessayer plus tard`);
     }
     throw new AssistantUnavailableError('API Gemini injoignable');
   }
@@ -224,7 +234,10 @@ async function askGemini(args) {
   if (finish === 'SAFETY' || finish === 'PROHIBITED_CONTENT' || finish === 'BLOCKLIST' || response.promptFeedback?.blockReason) {
     return { ...REFUSED, usage };
   }
-  if (finish === 'MAX_TOKENS') throw new AssistantUnavailableError('Reponse IA tronquee');
+  if (finish === 'MAX_TOKENS') {
+    console.error('[assistant] reponse Gemini tronquee (MAX_TOKENS)', JSON.stringify(usage ?? {}));
+    throw new AssistantUnavailableError('Reponse IA tronquee');
+  }
   const text = response.text;
   if (!text) throw new AssistantUnavailableError('Reponse IA vide');
   return { ...parseAssistantOutput(text), usage };
@@ -247,6 +260,7 @@ async function askClaude({ model, history, userText, foods }) {
       messages,
     });
   } catch (err) {
+    console.error(`[assistant] erreur Claude (${model}) :`, err?.status ?? '', err?.message ?? err);
     if (err instanceof Anthropic.AuthenticationError) throw new AssistantUnavailableError('Cle API Claude refusee');
     if (err instanceof Anthropic.RateLimitError) throw new AssistantUnavailableError('Limite de debit API atteinte, reessayer plus tard');
     if (err instanceof Anthropic.APIError) throw new AssistantUnavailableError(`API Claude indisponible (${err.status ?? 'reseau'})`);

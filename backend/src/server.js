@@ -12,6 +12,8 @@ const server = createApp(db).listen(port, () => {
   console.log(`Cals API sur le port ${port} (IA : ${provider ? `${provider} / ${resolveModel(provider)}` : 'desactivee'})`);
 });
 
+process.on('unhandledRejection', (err) => console.error('[process] promesse rejetee non geree :', err));
+
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => server.close(() => { db.close(); process.exit(0); }));
 }

@@ -5,6 +5,7 @@ import { getProfile, profileView, recalcTargets, syncCurrentWeight } from './lib
 import { entriesForDate, insertEntry, remaining, totals } from './lib/journal-service.js';
 import { recipeView, saveRecipe, validateRecipe } from './lib/recipe-service.js';
 import { askAssistant, contextBlock, resolveModel, resolveProvider } from './lib/assistant.js';
+import { createAuth } from './lib/auth.js';
 
 const notFound = (what) => Object.assign(new Error(`${what} introuvable`), { status: 404 });
 const today = () => new Date().toISOString().slice(0, 10);
@@ -17,13 +18,25 @@ function addDays(iso, n) {
 
 export function createApp(db) {
   const app = express();
+  app.set('trust proxy', 'loopback, uniquelocal');
   app.use(express.json({ limit: '1mb' }));
+  const auth = createAuth(db);
   const r = express.Router();
 
   r.get('/health', (req, res) => {
     const provider = resolveProvider();
     res.json({ ok: true, ai_enabled: !!provider, ai_provider: provider, model: resolveModel(provider) });
   });
+
+  // ---------- Authentification (routes publiques) ----------
+  r.get('/auth/status', (req, res) => res.json(auth.status(req)));
+  r.post('/auth/login', (req, res) => res.json(auth.login(req, res, {
+    username: req.body?.username, password: req.body?.password, remember: req.body?.remember !== false,
+  })));
+  r.post('/auth/logout', (req, res) => { auth.logout(req, res); res.status(204).end(); });
+
+  // Toutes les routes suivantes exigent une session.
+  r.use(auth.requireSession);
 
   // ---------- Profil ----------
   r.get('/profile', (req, res) => res.json(profileView(db)));

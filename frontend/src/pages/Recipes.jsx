@@ -1,27 +1,28 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
+import { useApi } from '../hooks/useApi.js';
+import Skeleton from '../components/Skeleton.jsx';
 import { n0, n1, todayIso, unitLabel } from '../format.js';
 import FoodPicker from '../components/FoodPicker.jsx';
 import SourceBadge from '../components/SourceBadge.jsx';
 
 export default function Recipes() {
-  const [recipes, setRecipes] = useState([]);
+  const { data } = useApi('/recipes');
+  const recipes = data || [];
   const [open, setOpen] = useState(null);
   const [editing, setEditing] = useState(null);
   const [tag, setTag] = useState('');
   const [msg, setMsg] = useState(null);
   const [error, setError] = useState(null);
 
-  const load = useCallback(() => api.get('/recipes').then(setRecipes).catch((e) => setError(e.message)), []);
-  useEffect(() => { load(); }, [load]);
 
   const tags = [...new Set(recipes.flatMap((r) => r.tags))].sort();
   const shown = tag ? recipes.filter((r) => r.tags.includes(tag)) : recipes;
 
   async function act(fn, ok) {
     setError(null); setMsg(null);
-    try { await fn(); setMsg(ok); load(); } catch (e) { setError(e.message); }
+    try { await fn(); setMsg(ok); } catch (e) { setError(e.message); }
   }
 
   return (
@@ -32,7 +33,7 @@ export default function Recipes() {
       </div>
       <p className="muted small">Idées de recettes selon votre restant du jour : demandez à l'<Link to="/assistant">assistant</Link>.</p>
       {editing && <RecipeForm initial={editing} onCancel={() => setEditing(null)}
-        onSaved={() => { setEditing(null); load(); }} />}
+        onSaved={() => setEditing(null)} />}
       {error && <p className="alert">{error}</p>}
       {msg && <p className="ok">{msg}</p>}
       {tags.length > 0 && (
@@ -41,7 +42,8 @@ export default function Recipes() {
           {tags.map((t) => <button key={t} className={tag === t ? 'active' : ''} onClick={() => setTag(t)}>{t}</button>)}
         </div>
       )}
-      {shown.length === 0 && <p className="muted">Aucune recette.</p>}
+      {!data && <Skeleton lines={4} />}
+      {data && shown.length === 0 && <p className="empty">Aucune recette.</p>}
       {shown.map((r) => (
         <section key={r.id} className="card">
           <div className="title-row">

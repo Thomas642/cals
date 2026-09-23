@@ -1,10 +1,10 @@
 import { n0 } from '../format.js';
 
 /** Jauge horizontale : consomme / cible, avec restant ou depassement. */
-export default function Gauge({ label, value, target, unit, incomplete }) {
+export default function Gauge({ label, value, target, unit, incomplete, tone = 'kcal' }) {
   if (target === null || target === undefined) {
     return (
-      <div className="gauge">
+      <div className={`gauge ${tone}`}>
         <div className="gauge-head"><span>{label}</span><span>{n0(value)} {unit}</span></div>
       </div>
     );
@@ -12,7 +12,7 @@ export default function Gauge({ label, value, target, unit, incomplete }) {
   const ratio = target > 0 ? value / target : 0;
   const over = value > target;
   return (
-    <div className={`gauge ${over ? 'over' : ''}`}>
+    <div className={`gauge ${tone} ${over ? 'over' : ''}`}>
       <div className="gauge-head">
         <span>{label}</span>
         <span><strong>{n0(value)}</strong> / {n0(target)} {unit}</span>

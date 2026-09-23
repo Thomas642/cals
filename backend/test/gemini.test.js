@@ -27,10 +27,18 @@ test('requete Gemini : historique, prompt systeme, schema JSON', () => {
 
 test('bout en bout via le SDK Gemini contre un faux serveur', async (t) => {
   let received = null;
+  let calls = 0;
   const fake = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
+      calls += 1;
+      if (calls === 1) { // premiere tentative : erreur temporaire, le SDK doit reessayer
+        res.statusCode = 502;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: { code: 502, message: 'Bad Gateway', status: 'UNAVAILABLE' } }));
+        return;
+      }
       received = { url: req.url, body: JSON.parse(body), key: req.headers['x-goog-api-key'] };
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({
@@ -56,6 +64,7 @@ test('bout en bout via le SDK Gemini contre un faux serveur', async (t) => {
   assert.equal(out.proposed_entries.length, 1);
   assert.equal(out.proposed_entries[0].kcal, 144);
   assert.equal(out.confidence, 'haute');
+  assert.equal(calls, 2);
   assert.match(received.url, /models\/gemini-3\.8-flash:generateContent/);
   assert.equal(received.key, 'cle-test');
   assert.equal(received.body.generationConfig.responseMimeType, 'application/json');

@@ -1,16 +1,16 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { api } from '../api.js';
+import { useApi } from '../hooks/useApi.js';
+import Skeleton from '../components/Skeleton.jsx';
 import { n0, n1, shortDate, todayIso } from '../format.js';
 import LineChart from '../components/LineChart.jsx';
 
 export default function Stats({ onProfileChange }) {
-  const [stats, setStats] = useState(null);
+  const { data: stats } = useApi(`/stats?end=${todayIso()}`);
   const [weight, setWeight] = useState('');
   const [date, setDate] = useState(todayIso());
   const [error, setError] = useState(null);
 
-  const load = useCallback(() => api.get(`/stats?end=${todayIso()}`).then(setStats).catch((e) => setError(e.message)), []);
-  useEffect(() => { load(); }, [load]);
 
   async function addWeight(e) {
     e.preventDefault();
@@ -18,18 +18,16 @@ export default function Stats({ onProfileChange }) {
     try {
       await api.post('/weights', { date, weight_kg: weight });
       setWeight('');
-      await load();
       onProfileChange();
     } catch (err) { setError(err.message); }
   }
 
   async function removeWeight(id) {
     await api.del(`/weights/${id}`);
-    await load();
     onProfileChange();
   }
 
-  if (!stats) return <p className="muted">{error || 'Chargement…'}</p>;
+  if (!stats) return <><h1>Statistiques</h1><Skeleton lines={5} /><Skeleton lines={4} /></>;
   return (
     <>
       <h1>Statistiques</h1>

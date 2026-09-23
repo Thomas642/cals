@@ -1,19 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
-import { api } from '../api.js';
+import { useDeferredValue, useMemo, useState } from 'react';
+import { useApi } from '../hooks/useApi.js';
 import { n1, refUnitLabel } from '../format.js';
 import SourceBadge from './SourceBadge.jsx';
 
 /** Recherche dans la base + quantite. onPick(food, quantity). */
 export default function FoodPicker({ onPick, submitLabel = 'Ajouter' }) {
   const [q, setQ] = useState('');
-  const [foods, setFoods] = useState([]);
+  const { data: all } = useApi('/foods');
   const [selected, setSelected] = useState(null);
   const [quantity, setQuantity] = useState('');
-
-  useEffect(() => {
-    const t = setTimeout(() => api.get(`/foods?q=${encodeURIComponent(q)}`).then(setFoods).catch(() => setFoods([])), 150);
-    return () => clearTimeout(t);
-  }, [q]);
+  const query = useDeferredValue(q.trim().toLowerCase());
+  const foods = (all || []).filter((f) => !query || f.name.toLowerCase().includes(query));
 
   const preview = useMemo(() => {
     const qty = Number(String(quantity).replace(',', '.'));
