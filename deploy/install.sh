@@ -2,10 +2,10 @@
 # ════════════════════════════════════════════════════════════════════════════
 #  Cals — premiere installation sur le VPS (Ubuntu/Debian, Docker deja installe)
 #
-#  Usage (depuis n'importe ou) :
-#    curl -fsSL https://raw.githubusercontent.com/Thomas642/cals/MAIN/deploy/install.sh -o install.sh
-#    MODE=nginx bash install.sh        # nginx systeme + Certbot (comme l'ancien FamilyTracker)
-#    MODE=tunnel bash install.sh       # tunnel Cloudflare Zero Trust existant
+#  Usage (depot prive : cloner d'abord avec ses identifiants GitHub) :
+#    git clone git@github.com:Thomas642/cals.git ~/cals
+#    MODE=nginx bash ~/cals/deploy/install.sh    # nginx systeme + Certbot
+#    MODE=tunnel bash ~/cals/deploy/install.sh   # tunnel Cloudflare Zero Trust existant
 #
 #  Variables optionnelles :
 #    APP_DIR   dossier d'installation          (defaut : $HOME/cals)

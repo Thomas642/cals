@@ -65,11 +65,15 @@ Cals tourne dans ses propres conteneurs (projet Docker Compose `cals`) et n'éco
 
 ### Installation (une seule fois)
 
+Le dépôt est privé : le cloner avec ses identifiants GitHub, puis lancer le script depuis le clone.
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Thomas642/cals/MAIN/deploy/install.sh -o install.sh
-MODE=nginx bash install.sh     # nginx système + Certbot
+git clone git@github.com:Thomas642/cals.git ~/cals          # clé SSH GitHub sur le VPS
+# ou : git clone https://github.com/Thomas642/cals.git ~/cals  (jeton d'accès personnel comme mot de passe)
+
+MODE=nginx bash ~/cals/deploy/install.sh     # nginx système + Certbot
 # ou
-MODE=tunnel bash install.sh    # tunnel Cloudflare Zero Trust
+MODE=tunnel bash ~/cals/deploy/install.sh    # tunnel Cloudflare Zero Trust
 ```
 
 Le script :
