@@ -53,8 +53,8 @@ say "Fichier .env"
 if [[ ! -f .env ]]; then
   cp .env.example .env
   sed -i "s/^CALS_HTTP_PORT=.*/CALS_HTTP_PORT=$PORT/" .env
-  read -rp "Cle API Anthropic (Entree pour laisser l'IA desactivee) : " KEY || true
-  if [[ -n "${KEY:-}" ]]; then sed -i "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=$KEY|" .env; fi
+  read -rp "Cle API Gemini (https://aistudio.google.com, Entree pour laisser l'IA desactivee) : " KEY || true
+  if [[ -n "${KEY:-}" ]]; then sed -i "s|^GEMINI_API_KEY=.*|GEMINI_API_KEY=$KEY|" .env; fi
   if [[ "$MODE" == "tunnel" ]]; then
     read -rp "Jeton du tunnel Cloudflare (Entree si un cloudflared tourne deja sur le VPS) : " TOK || true
     if [[ -n "${TOK:-}" ]]; then sed -i "s|^CLOUDFLARE_TUNNEL_TOKEN=.*|CLOUDFLARE_TUNNEL_TOKEN=$TOK|" .env; fi

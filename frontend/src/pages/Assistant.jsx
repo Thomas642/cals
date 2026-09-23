@@ -40,7 +40,7 @@ export default function Assistant({ aiEnabled }) {
     <>
       <h1>Assistant nutritionnel</h1>
       {!aiEnabled && (
-        <p className="alert">L'assistant IA n'est pas configuré (clé API absente côté serveur). La saisie manuelle reste disponible dans le <Link to="/">journal</Link>.</p>
+        <p className="alert">L'assistant IA n'est pas configuré (aucune clé GEMINI_API_KEY ou ANTHROPIC_API_KEY côté serveur). La saisie manuelle reste disponible dans le <Link to="/">journal</Link>.</p>
       )}
       <div className="chat">
         {messages.length === 0 && (
