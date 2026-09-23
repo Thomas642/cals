@@ -1,7 +1,9 @@
 node_modules/
+dist/
+data/
+backups/
 .env
-*.env.local
-uploads/
+*.db
+*.db-*
 *.log
 .DS_Store
-dist/

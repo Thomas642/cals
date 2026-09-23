@@ -1,378 +1,342 @@
-require('dotenv').config();
+import express from 'express';
+import * as v from './lib/validate.js';
+import { ageFromBirthDate, nutritionFor, round1, unitForFood } from './lib/calc.js';
+import { getProfile, profileView, recalcTargets, syncCurrentWeight } from './lib/profile-service.js';
+import { entriesForDate, insertEntry, remaining, totals } from './lib/journal-service.js';
+import { recipeView, saveRecipe, validateRecipe } from './lib/recipe-service.js';
+import { askAssistant, contextBlock, MODEL } from './lib/assistant.js';
 
-const express = require('express');
-const http = require('http');
-const path = require('path');
-const cors = require('cors');
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
-const { Server } = require('socket.io');
-const jwt = require('jsonwebtoken');
-const webpush = require('web-push');
+const notFound = (what) => Object.assign(new Error(`${what} introuvable`), { status: 404 });
+const today = () => new Date().toISOString().slice(0, 10);
 
-const pool = require('./config/database');
-const authRoutes = require('./routes/auth');
-const positionsRoutes = require('./routes/positions');
-const historyRoutes = require('./routes/history');
-const zonesRoutes = require('./routes/zones');
-const membersRoutes = require('./routes/members');
-const notifyRoutes = require('./routes/notify');
-const chatRoutes   = require('./routes/chat');
-const shareRoutes    = require('./routes/share');
-const scheduleRoutes = require('./routes/schedule');
-const { startWatchdog } = require('./services/watchdog');
-const placesRoutes = require('./routes/places');
-const routingRoutes = require('./routes/routing');
-const adminRoutes   = require('./routes/admin');
-const drivingRoutes = require('./routes/driving');
-
-// ── Web Push setup ───────────────────────────────────────────────────────────
-if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-    webpush.setVapidDetails(
-        process.env.VAPID_EMAIL || 'mailto:admin@example.com',
-        process.env.VAPID_PUBLIC_KEY,
-        process.env.VAPID_PRIVATE_KEY
-    );
+function addDays(iso, n) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
 }
 
-// ── Express app ──────────────────────────────────────────────────────────────
-const app = express();
-const server = http.createServer(app);
+export function createApp(db) {
+  const app = express();
+  app.use(express.json({ limit: '1mb' }));
+  const r = express.Router();
 
-// ── Socket.io ────────────────────────────────────────────────────────────────
-const io = new Server(server, {
-    cors: {
-        origin: (origin, cb) => {
-            if (!origin) return cb(null, true);
-            if (_allowedOrigins.has(_normalizeOrigin(origin))) return cb(null, true);
-            if (!process.env.FRONTEND_URL) return cb(null, true);
-            cb(new Error(`CORS blocked: ${origin}`));
-        },
-        credentials: true,
-    },
-});
+  r.get('/health', (req, res) => res.json({ ok: true, ai_enabled: !!process.env.ANTHROPIC_API_KEY, model: MODEL }));
 
-// Authenticate socket connections with JWT
-io.use(async (socket, next) => {
-    const token = socket.handshake.auth.token;
-    if (!token) return next(new Error('Missing token'));
-    try {
-        const payload = jwt.verify(token, process.env.JWT_SECRET);
-        const { rows } = await pool.query(
-            'SELECT id, name, role FROM users WHERE id = $1 AND is_active = TRUE', [payload.sub]
-        );
-        if (!rows[0]) return next(new Error('Unauthorized'));
-        socket.user = rows[0];
-        next();
-    } catch {
-        next(new Error('Invalid token'));
+  // ---------- Profil ----------
+  r.get('/profile', (req, res) => res.json(profileView(db)));
+
+  r.put('/profile', (req, res) => {
+    const p = v.profile(req.body || {});
+    const exists = !!getProfile(db);
+    const cols = ['username', 'sex', 'birth_date', 'height_cm', 'weight_kg', 'activity_level', 'goal', 'goal_intensity', 'manual_targets'];
+    if (p.manual_targets) cols.push('target_kcal', 'target_protein_g', 'target_carbs_g', 'target_fat_g');
+    db.transaction(() => {
+      if (exists) {
+        db.prepare(`UPDATE profile SET ${cols.map((c) => `${c} = @${c}`).join(', ')} WHERE id = 1`).run(p);
+      } else {
+        db.prepare(`INSERT INTO profile (id, ${cols.join(', ')}) VALUES (1, ${cols.map((c) => `@${c}`).join(', ')})`).run(p);
+        db.prepare('INSERT INTO weight_log (date, weight_kg) VALUES (?, ?)').run(today(), p.weight_kg);
+      }
+      recalcTargets(db);
+    })();
+    res.json(profileView(db));
+  });
+
+  // ---------- Aliments ----------
+  r.get('/foods', (req, res) => {
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const rows = q
+      ? db.prepare("SELECT * FROM food WHERE name LIKE ? ESCAPE '\\' ORDER BY name COLLATE NOCASE")
+        .all(`%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
+      : db.prepare('SELECT * FROM food ORDER BY name COLLATE NOCASE').all();
+    res.json(rows);
+  });
+
+  r.post('/foods', (req, res) => {
+    const f = v.food(req.body || {});
+    const info = db.prepare(`INSERT INTO food (name, kcal, protein_g, carbs_g, fat_g, ref_unit, source, is_estimate)
+      VALUES (@name, @kcal, @protein_g, @carbs_g, @fat_g, @ref_unit, @source, @is_estimate)`).run(f);
+    res.status(201).json(db.prepare('SELECT * FROM food WHERE id = ?').get(info.lastInsertRowid));
+  });
+
+  r.put('/foods/:id', (req, res) => {
+    const fid = v.id(req.params.id);
+    const f = v.food(req.body || {});
+    const info = db.prepare(`UPDATE food SET name = @name, kcal = @kcal, protein_g = @protein_g, carbs_g = @carbs_g,
+      fat_g = @fat_g, ref_unit = @ref_unit, source = @source, is_estimate = @is_estimate WHERE id = @id`).run({ ...f, id: fid });
+    if (!info.changes) throw notFound('Aliment');
+    res.json(db.prepare('SELECT * FROM food WHERE id = ?').get(fid));
+  });
+
+  r.delete('/foods/:id', (req, res) => {
+    const fid = v.id(req.params.id);
+    const used = db.prepare('SELECT COUNT(*) AS n FROM recipe_ingredient WHERE food_id = ?').get(fid).n;
+    if (used) throw Object.assign(new Error(`Aliment utilise dans ${used} ingredient(s) de recette`), { status: 409 });
+    const info = db.prepare('DELETE FROM food WHERE id = ?').run(fid);
+    if (!info.changes) throw notFound('Aliment');
+    res.status(204).end();
+  });
+
+  // ---------- Journal ----------
+  function dayView(date) {
+    const entries = entriesForDate(db, date);
+    const t = totals(entries);
+    return { date, entries, totals: t, remaining: remaining(getProfile(db), t) };
+  }
+
+  r.get('/journal', (req, res) => res.json(dayView(v.date(req.query.date || today()))));
+
+  // Deux modes : { food_id, quantity } (valeurs calculees depuis la base) ou saisie complete.
+  r.post('/journal', (req, res) => {
+    const body = req.body || {};
+    let entry;
+    if (body.food_id && body.kcal === undefined) {
+      const food = db.prepare('SELECT * FROM food WHERE id = ?').get(v.id(body.food_id, 'food_id'));
+      if (!food) throw notFound('Aliment');
+      const unit = unitForFood(food);
+      const quantity = v.num(body.quantity, 'quantity', { min: 0.01, max: unit === 'g' ? 5000 : 50 });
+      entry = v.journalEntry({ date: body.date, food_id: food.id, display_name: food.name, quantity, unit,
+        ...nutritionFor(food, quantity), origin: 'base' });
+    } else {
+      entry = v.journalEntry(body);
+      if (entry.food_id && !db.prepare('SELECT 1 FROM food WHERE id = ?').get(entry.food_id)) entry.food_id = null;
     }
-});
+    res.status(201).json(insertEntry(db, entry));
+  });
 
-io.on('connection', (socket) => {
-    console.log(`[WS] ${socket.user.name} connected`);
-    socket.join('family');
+  r.delete('/journal/:id', (req, res) => {
+    const info = db.prepare('DELETE FROM journal_entry WHERE id = ?').run(v.id(req.params.id));
+    if (!info.changes) throw notFound('Entree');
+    res.status(204).end();
+  });
 
-    socket.on('disconnect', () => {
-        console.log(`[WS] ${socket.user.name} disconnected`);
+  // ---------- Recettes ----------
+  r.get('/recipes', (req, res) => {
+    const ids = db.prepare('SELECT id FROM recipe ORDER BY name COLLATE NOCASE').all();
+    res.json(ids.map(({ id }) => recipeView(db, id)));
+  });
+
+  r.get('/recipes/:id', (req, res) => {
+    const rec = recipeView(db, v.id(req.params.id));
+    if (!rec) throw notFound('Recette');
+    res.json(rec);
+  });
+
+  r.post('/recipes', (req, res) => {
+    const rid = saveRecipe(db, validateRecipe(db, req.body || {}));
+    res.status(201).json(recipeView(db, rid));
+  });
+
+  r.put('/recipes/:id', (req, res) => {
+    const rid = v.id(req.params.id);
+    if (!db.prepare('SELECT 1 FROM recipe WHERE id = ?').get(rid)) throw notFound('Recette');
+    saveRecipe(db, validateRecipe(db, req.body || {}), rid);
+    res.json(recipeView(db, rid));
+  });
+
+  r.delete('/recipes/:id', (req, res) => {
+    const info = db.prepare('DELETE FROM recipe WHERE id = ?').run(v.id(req.params.id));
+    if (!info.changes) throw notFound('Recette');
+    res.status(204).end();
+  });
+
+  // Ajout d'une recette au journal en une action (valeurs par portion figees).
+  r.post('/recipes/:id/log', (req, res) => {
+    const rec = recipeView(db, v.id(req.params.id));
+    if (!rec) throw notFound('Recette');
+    const portions = v.num(req.body?.servings ?? 1, 'servings', { min: 0.25, max: 20 });
+    const s = (x) => (x === null ? null : round1(x * portions));
+    const entry = v.journalEntry({
+      date: req.body?.date || today(), food_id: null, display_name: `${rec.name} (recette)`,
+      quantity: portions, unit: 'unit', kcal: s(rec.per_serving.kcal), protein_g: s(rec.per_serving.protein_g),
+      carbs_g: s(rec.per_serving.carbs_g), fat_g: s(rec.per_serving.fat_g), origin: 'recipe',
     });
-});
+    res.status(201).json(insertEntry(db, entry));
+  });
 
-app.set('io', io);
+  // ---------- Routines ----------
+  function routineView(rid) {
+    const rt = db.prepare('SELECT * FROM routine WHERE id = ?').get(rid);
+    if (!rt) return null;
+    const items = db.prepare('SELECT * FROM routine_item WHERE routine_id = ? ORDER BY id').all(rid);
+    return { ...rt, items, totals: totals(items) };
+  }
 
-// Trust the first proxy (nginx) so rate-limiter reads the real client IP
-app.set('trust proxy', 1);
+  r.get('/routines', (req, res) => {
+    res.json(db.prepare('SELECT id FROM routine ORDER BY name COLLATE NOCASE').all().map(({ id }) => routineView(id)));
+  });
 
-// ── Middleware ───────────────────────────────────────────────────────────────
-app.use(helmet({
-    contentSecurityPolicy: false, // handled by Nginx
-}));
+  // Cree une routine a partir des entrees d'un jour (entry_ids optionnel pour filtrer).
+  r.post('/routines', (req, res) => {
+    const name = v.str(req.body?.name, 'name', { max: 120 });
+    const date = v.date(req.body?.from_date, 'from_date');
+    let entries = entriesForDate(db, date);
+    if (Array.isArray(req.body?.entry_ids)) {
+      const keep = new Set(req.body.entry_ids.map(Number));
+      entries = entries.filter((e) => keep.has(e.id));
+    }
+    if (!entries.length) throw new v.ValidationError('Aucune entree a enregistrer dans la routine');
+    const rid = db.transaction(() => {
+      const id = db.prepare('INSERT INTO routine (name) VALUES (?)').run(name).lastInsertRowid;
+      const ins = db.prepare(`INSERT INTO routine_item (routine_id, food_id, display_name, quantity, unit, kcal, protein_g, carbs_g, fat_g)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      for (const e of entries) ins.run(id, e.food_id, e.display_name, e.quantity, e.unit, e.kcal, e.protein_g, e.carbs_g, e.fat_g);
+      return id;
+    })();
+    res.status(201).json(routineView(rid));
+  });
 
-// Accept both the web origin and the Capacitor native app origins
-const _normalizeOrigin = (u) => (u || '').replace(/\/+$/, '').toLowerCase();
-const _allowedOrigins = new Set([
-    _normalizeOrigin(process.env.FRONTEND_URL),
-    'capacitor://localhost',
-    'https://localhost',
-    'http://localhost',
-].filter(Boolean));
+  r.delete('/routines/:id', (req, res) => {
+    const info = db.prepare('DELETE FROM routine WHERE id = ?').run(v.id(req.params.id));
+    if (!info.changes) throw notFound('Routine');
+    res.status(204).end();
+  });
 
-app.use(cors({
-    origin: (origin, cb) => {
-        // No origin = server-to-server or same-origin — allow
-        if (!origin) return cb(null, true);
-        if (_allowedOrigins.has(_normalizeOrigin(origin))) return cb(null, true);
-        // Fallback: allow everything if no FRONTEND_URL configured
-        if (!process.env.FRONTEND_URL) return cb(null, true);
-        cb(new Error(`CORS blocked: ${origin}`));
-    },
-    credentials: true,
-}));
+  r.post('/routines/:id/log', (req, res) => {
+    const rt = routineView(v.id(req.params.id));
+    if (!rt) throw notFound('Routine');
+    const date = v.date(req.body?.date || today());
+    const created = db.transaction(() => rt.items.map((it) => insertEntry(db, v.journalEntry({
+      date, food_id: it.food_id, display_name: it.display_name, quantity: it.quantity, unit: it.unit,
+      kcal: it.kcal, protein_g: it.protein_g, carbs_g: it.carbs_g, fat_g: it.fat_g, origin: 'base',
+    }))))();
+    res.status(201).json(created);
+  });
 
-app.use(express.json({ limit: '1mb' }));
+  // ---------- Poids ----------
+  r.get('/weights', (req, res) => res.json(db.prepare('SELECT * FROM weight_log ORDER BY date, id').all()));
 
-const apiLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 500,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Trop de requêtes, réessayez dans quelques minutes.' },
-});
+  r.post('/weights', (req, res) => {
+    const date = v.date(req.body?.date || today());
+    const weight = v.num(req.body?.weight_kg, 'weight_kg', { min: 30, max: 300 });
+    const row = db.transaction(() => {
+      // Une mesure par jour : la nouvelle remplace l'ancienne.
+      db.prepare('DELETE FROM weight_log WHERE date = ?').run(date);
+      const id = db.prepare('INSERT INTO weight_log (date, weight_kg) VALUES (?, ?)').run(date, weight).lastInsertRowid;
+      syncCurrentWeight(db);
+      return db.prepare('SELECT * FROM weight_log WHERE id = ?').get(id);
+    })();
+    res.status(201).json(row);
+  });
 
-const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 20,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Trop de tentatives, réessayez dans quelques minutes.' },
-});
+  r.delete('/weights/:id', (req, res) => {
+    const info = db.prepare('DELETE FROM weight_log WHERE id = ?').run(v.id(req.params.id));
+    if (!info.changes) throw notFound('Mesure');
+    syncCurrentWeight(db);
+    res.status(204).end();
+  });
 
-// ── Static uploads (served under /api/uploads so nginx proxy covers it) ──────
-const uploadDir = path.resolve(process.env.UPLOAD_DIR || '../uploads');
-app.use('/api/uploads', express.static(uploadDir));
+  // ---------- Statistiques ----------
+  // Adherence : ecart moyen aux cibles sur les jours comportant au moins une entree.
+  r.get('/stats', (req, res) => {
+    const end = v.date(req.query.end || today(), 'end');
+    const profile = getProfile(db);
+    const rows = db.prepare(`SELECT date, SUM(kcal) AS kcal, SUM(protein_g) AS protein_g, COUNT(*) AS n
+      FROM journal_entry WHERE date > ? AND date <= ? GROUP BY date ORDER BY date`).all(addDays(end, -30), end);
+    const window = (days) => {
+      const start = addDays(end, -days);
+      const inWin = rows.filter((x) => x.date > start);
+      if (!inWin.length || !profile) return { days, logged_days: inWin.length, avg_kcal: null, avg_protein_g: null, kcal_gap: null, protein_gap: null };
+      const avg = (k) => round1(inWin.reduce((s, x) => s + x[k], 0) / inWin.length);
+      const avgAbs = (k, target) => round1(inWin.reduce((s, x) => s + Math.abs(x[k] - target), 0) / inWin.length);
+      return {
+        days,
+        logged_days: inWin.length,
+        avg_kcal: avg('kcal'),
+        avg_protein_g: avg('protein_g'),
+        kcal_gap: round1(avg('kcal') - profile.target_kcal),
+        protein_gap: round1(avg('protein_g') - profile.target_protein_g),
+        kcal_abs_gap: avgAbs('kcal', profile.target_kcal),
+        protein_abs_gap: avgAbs('protein_g', profile.target_protein_g),
+      };
+    };
+    // Moyenne glissante 7 jours du poids (mesures presentes dans la fenetre).
+    const weights = db.prepare('SELECT id, date, weight_kg FROM weight_log ORDER BY date').all();
+    const weightSeries = weights.map((w) => {
+      const from = addDays(w.date, -6);
+      const win = weights.filter((x) => x.date >= from && x.date <= w.date);
+      return { ...w, avg7: round1(win.reduce((s, x) => s + x.weight_kg, 0) / win.length) };
+    });
+    res.json({
+      end,
+      targets: profile ? { kcal: profile.target_kcal, protein_g: profile.target_protein_g } : null,
+      days: rows.map((x) => ({ date: x.date, kcal: round1(x.kcal), protein_g: round1(x.protein_g), entries: x.n })),
+      adherence7: window(7),
+      adherence30: window(30),
+      weights: weightSeries,
+    });
+  });
 
-// ── Routes ───────────────────────────────────────────────────────────────────
-app.use('/api/auth', authLimiter, authRoutes);
-app.use('/api/positions', apiLimiter, positionsRoutes);
-app.use('/api/history', apiLimiter, historyRoutes);
-app.use('/api/zones', apiLimiter, zonesRoutes);
-app.use('/api/members', apiLimiter, membersRoutes);
-app.use('/api/notify', apiLimiter, notifyRoutes);
-app.use('/api/chat',   apiLimiter, chatRoutes);
-app.use('/api/share',    apiLimiter, shareRoutes);
-app.use('/api/places',   apiLimiter, placesRoutes);
-app.use('/api/schedule', apiLimiter, scheduleRoutes);
-app.use('/api/routing',  apiLimiter, routingRoutes);
-app.use('/api/admin',    apiLimiter, adminRoutes);
-app.use('/api/driving',  apiLimiter, drivingRoutes);
+  // ---------- Entrainement : journal de charges ----------
+  r.get('/workouts', (req, res) => {
+    const rows = req.query.day_code
+      ? db.prepare('SELECT * FROM workout_log WHERE day_code = ? ORDER BY date DESC, id DESC LIMIT 200').all(String(req.query.day_code))
+      : db.prepare('SELECT * FROM workout_log ORDER BY date DESC, id DESC LIMIT 200').all();
+    res.json(rows);
+  });
 
-// VAPID public key (needed by the frontend to subscribe to push)
-app.get('/api/push-key', (_, res) => {
-    res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || '' });
-});
+  r.post('/workouts', (req, res) => {
+    const b = req.body || {};
+    const row = {
+      date: v.date(b.date || today()),
+      day_code: v.oneOf(b.day_code, 'day_code', ['J1', 'J2', 'J3', 'J4', 'J5']),
+      exercise: v.str(b.exercise, 'exercise', { max: 120 }),
+      load_kg: v.num(b.load_kg, 'load_kg', { min: 0, max: 500, optional: true }),
+      reps: v.str(b.reps, 'reps', { max: 60, optional: true }),
+      note: v.str(b.note, 'note', { max: 500, optional: true }),
+    };
+    const info = db.prepare(`INSERT INTO workout_log (date, day_code, exercise, load_kg, reps, note)
+      VALUES (@date, @day_code, @exercise, @load_kg, @reps, @note)`).run(row);
+    res.status(201).json(db.prepare('SELECT * FROM workout_log WHERE id = ?').get(info.lastInsertRowid));
+  });
 
-// Health check
-app.get('/api/health', async (_, res) => {
+  r.delete('/workouts/:id', (req, res) => {
+    const info = db.prepare('DELETE FROM workout_log WHERE id = ?').run(v.id(req.params.id));
+    if (!info.changes) throw notFound('Seance');
+    res.status(204).end();
+  });
+
+  // ---------- Assistant IA ----------
+  r.post('/assistant', async (req, res, next) => {
     try {
-        await pool.query('SELECT 1');
-        res.json({ status: 'ok', db: 'connected' });
-    } catch {
-        res.status(503).json({ status: 'error', db: 'disconnected' });
+      const message = v.str(req.body?.message, 'message', { max: 2000 });
+      const date = v.date(req.body?.date || today());
+      const history = (Array.isArray(req.body?.history) ? req.body.history : [])
+        .filter((h) => (h?.role === 'user' || h?.role === 'assistant') && typeof h.content === 'string' && h.content.trim())
+        .slice(-10)
+        .map((h) => ({ role: h.role, content: h.content.slice(0, 4000) }));
+      if (history.length && history[0].role !== 'user') history.shift();
+      const profile = getProfile(db);
+      const day = dayView(date);
+      const foods = db.prepare('SELECT * FROM food ORDER BY id').all();
+      const context = contextBlock({
+        profile, age: profile ? ageFromBirthDate(profile.birth_date) : null,
+        remaining: day.remaining || {}, consumed: day.totals, date,
+      });
+      res.json(await askAssistant({ message, history, foods, context }));
+    } catch (err) {
+      next(err);
     }
-});
+  });
 
-// ── 404 ──────────────────────────────────────────────────────────────────────
-app.use((req, res) => {
-    res.status(404).json({ error: 'Not found' });
-});
+  // ---------- Export / sauvegarde ----------
+  r.get('/export', (req, res) => {
+    const tables = ['profile', 'weight_log', 'food', 'journal_entry', 'recipe', 'recipe_ingredient', 'routine', 'routine_item', 'workout_log'];
+    const dump = { app: 'cals', exported_at: new Date().toISOString() };
+    for (const t of tables) dump[t] = db.prepare(`SELECT * FROM ${t}`).all();
+    res.setHeader('Content-Disposition', `attachment; filename="cals-export-${today()}.json"`);
+    res.json(dump);
+  });
 
-// ── Error handler ─────────────────────────────────────────────────────────────
-app.use((err, req, res, next) => {
-    console.error(err);
-    if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(400).json({ error: 'File too large' });
-    }
-    res.status(500).json({ error: 'Internal server error' });
-});
+  app.use('/api', r);
+  app.use('/api', (req, res) => res.status(404).json({ error: 'Route inconnue' }));
 
-// ── Migrations ───────────────────────────────────────────────────────────────
-async function runMigrations() {
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS places (
-            id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            name       VARCHAR(100) NOT NULL,
-            icon       VARCHAR(20)  NOT NULL DEFAULT 'home',
-            latitude   DOUBLE PRECISION NOT NULL,
-            longitude  DOUBLE PRECISION NOT NULL,
-            created_by UUID REFERENCES users(id) ON DELETE SET NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-    `);
+  // eslint-disable-next-line no-unused-vars
+  app.use((err, req, res, next) => {
+    const status = err.status || (err.type === 'entity.parse.failed' ? 400 : 500);
+    if (status >= 500 && status !== 503) console.error(err);
+    res.status(status).json({ error: status === 500 ? 'Erreur interne' : err.message, code: status === 503 ? 'ia_indisponible' : undefined });
+  });
 
-    // Ensure notifications_log exists with the full type set
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS notifications_log (
-            id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            type         VARCHAR(20) NOT NULL,
-            triggered_by UUID        REFERENCES users(id) ON DELETE SET NULL,
-            sent_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            payload      JSONB       NOT NULL DEFAULT '{}'
-        )
-    `);
-    // Drop old restrictive CHECK constraint if present, then add the full one
-    await pool.query(`
-        ALTER TABLE notifications_log
-            DROP CONSTRAINT IF EXISTS notifications_log_type_check
-    `);
-    await pool.query(`
-        ALTER TABLE notifications_log
-            ADD CONSTRAINT notifications_log_type_check
-            CHECK (type IN ('sos','ok_signal','quick_message','speed_alert',
-                            'geofence_enter','geofence_exit','battery','disconnect'))
-    `);
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS notifications_log_sent_at_idx
-            ON notifications_log(sent_at DESC)
-    `);
-
-    // Chat messages
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS messages (
-            id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            text    VARCHAR(1000) NOT NULL,
-            sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-    `);
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS messages_sent_at_idx ON messages(sent_at DESC)
-    `);
-
-    // Notes on places
-    await pool.query(`ALTER TABLE places ADD COLUMN IF NOT EXISTS notes VARCHAR(500) NOT NULL DEFAULT ''`);
-
-    // Share tokens (temporary public tracking links)
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS share_tokens (
-            id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            token      VARCHAR(64) NOT NULL UNIQUE,
-            user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            label      VARCHAR(100) NOT NULL DEFAULT '',
-            expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '24 hours',
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-    `);
-    await pool.query(`CREATE INDEX IF NOT EXISTS share_tokens_token_idx ON share_tokens(token)`);
-
-    // Cleanup expired share tokens
-    await pool.query(`DELETE FROM share_tokens WHERE expires_at < NOW()`);
-
-    // Zone presence tracking (for auto check-in)
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS zone_presence (
-            zone_id    UUID NOT NULL REFERENCES zones(id)  ON DELETE CASCADE,
-            user_id    UUID NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
-            entered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            PRIMARY KEY (zone_id, user_id)
-        )
-    `);
-
-    // Guest users expiry column
-    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS guest_expires_at TIMESTAMPTZ`);
-
-    // Schedule alerts (planning + alertes horaires)
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS schedule_alerts (
-            id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            member_id     UUID NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
-            zone_id       UUID NOT NULL REFERENCES zones(id)  ON DELETE CASCADE,
-            label         VARCHAR(100) NOT NULL DEFAULT '',
-            expected_time TIME NOT NULL,
-            tolerance_min INT  NOT NULL DEFAULT 15,
-            days          TEXT[] NOT NULL DEFAULT '{1,2,3,4,5}',
-            active        BOOL NOT NULL DEFAULT TRUE,
-            created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-    `);
-
-    // Zones: type + curfew
-    await pool.query(`ALTER TABLE zones ADD COLUMN IF NOT EXISTS zone_type VARCHAR(20) NOT NULL DEFAULT 'standard'`);
-    await pool.query(`ALTER TABLE zones ADD COLUMN IF NOT EXISTS curfew_start TIME`);
-    await pool.query(`ALTER TABLE zones ADD COLUMN IF NOT EXISTS curfew_end TIME`);
-
-    // Zones: postal address (filled via reverse geocoding when creating a zone)
-    await pool.query(`ALTER TABLE zones ADD COLUMN IF NOT EXISTS address VARCHAR(500) NOT NULL DEFAULT ''`);
-
-    // Users: check-in support
-    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_checkin_at TIMESTAMPTZ`);
-    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS checkin_interval_min INT`);
-
-    // Chat reactions
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS message_reactions (
-            message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-            user_id    UUID NOT NULL REFERENCES users(id)    ON DELETE CASCADE,
-            emoji      VARCHAR(10) NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            PRIMARY KEY (message_id, user_id)
-        )
-    `);
-
-    // Performance indexes — composite indexes that match common query patterns
-    // (idempotent: CREATE INDEX IF NOT EXISTS is safe to run on every boot)
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS positions_user_recorded_idx
-            ON positions(user_id, recorded_at DESC)
-    `);
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS notifications_log_triggered_sent_idx
-            ON notifications_log(triggered_by, sent_at DESC)
-    `);
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS messages_user_sent_idx
-            ON messages(user_id, sent_at DESC)
-    `);
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS share_tokens_user_expires_idx
-            ON share_tokens(user_id, expires_at DESC)
-    `);
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS message_reactions_message_idx
-            ON message_reactions(message_id)
-    `);
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS schedule_alerts_member_active_idx
-            ON schedule_alerts(member_id, active)
-    `);
-
-    // Per-user rate limits (NULL = no limit / use defaults)
-    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS rate_limit_positions_day INT`);
-    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS rate_limit_messages_day  INT`);
-
-    // Admin audit log
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS audit_log (
-            id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            actor_id   UUID REFERENCES users(id) ON DELETE SET NULL,
-            action     VARCHAR(50) NOT NULL,
-            target_id  UUID REFERENCES users(id) ON DELETE SET NULL,
-            details    JSONB NOT NULL DEFAULT '{}',
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-    `);
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS audit_log_created_idx ON audit_log(created_at DESC)
-    `);
-
-    // Driving incidents (Life360-style hard brake / accel / speeding / sharp turn)
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS driving_incidents (
-            id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            incident_type VARCHAR(20) NOT NULL,
-            severity      SMALLINT NOT NULL DEFAULT 1,
-            speed_kmh     FLOAT,
-            location      GEOGRAPHY(Point, 4326),
-            recorded_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            CHECK (incident_type IN ('hard_brake','hard_accel','speeding','sharp_turn'))
-        )
-    `);
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS driving_incidents_user_idx
-            ON driving_incidents(user_id, recorded_at DESC)
-    `);
+  return app;
 }
-
-// ── Start ────────────────────────────────────────────────────────────────────
-const PORT = process.env.PORT || 3000;
-runMigrations()
-    .then(() => server.listen(PORT, () => {
-        console.log(`Family Tracker API running on port ${PORT}`);
-        startWatchdog(io);
-    }))
-    .catch((err) => {
-        console.error('Migration failed:', err);
-        process.exit(1);
-    });
-
-module.exports = app;
