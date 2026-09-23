@@ -120,6 +120,29 @@ export function createApp(db) {
     res.status(201).json(insertEntry(db, entry));
   });
 
+  // Recalcule les entrees d'un jour saisies depuis la base avec les valeurs actuelles des aliments.
+  // Les entrees libres, IA ou recettes ne sont pas touchees (pas d'aliment de reference).
+  r.post('/journal/recompute', (req, res) => {
+    const date = v.date(req.body?.date);
+    const rows = db.prepare(`SELECT e.*, f.kcal AS f_kcal, f.protein_g AS f_protein_g, f.carbs_g AS f_carbs_g,
+        f.fat_g AS f_fat_g, f.ref_unit AS f_ref_unit, f.name AS f_name
+      FROM journal_entry e JOIN food f ON f.id = e.food_id WHERE e.date = ?`).all(date);
+    const update = db.prepare(`UPDATE journal_entry SET kcal = @kcal, protein_g = @protein_g, carbs_g = @carbs_g,
+      fat_g = @fat_g WHERE id = @id`);
+    const changed = [];
+    db.transaction(() => {
+      for (const e of rows) {
+        const food = { kcal: e.f_kcal, protein_g: e.f_protein_g, carbs_g: e.f_carbs_g, fat_g: e.f_fat_g, ref_unit: e.f_ref_unit };
+        if (unitForFood(food) !== e.unit) continue; // unite incompatible : on ne devine pas
+        const n = nutritionFor(food, e.quantity);
+        if (n.kcal === e.kcal && n.protein_g === e.protein_g && n.carbs_g === e.carbs_g && n.fat_g === e.fat_g) continue;
+        update.run({ id: e.id, ...n });
+        changed.push({ id: e.id, name: e.display_name, before: { kcal: e.kcal, protein_g: e.protein_g }, after: n });
+      }
+    })();
+    res.json({ date, checked: rows.length, updated: changed.length, changes: changed });
+  });
+
   r.delete('/journal/:id', (req, res) => {
     const info = db.prepare('DELETE FROM journal_entry WHERE id = ?').run(v.id(req.params.id));
     if (!info.changes) throw notFound('Entree');

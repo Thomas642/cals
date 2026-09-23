@@ -86,6 +86,22 @@ test('journal : ajout depuis la base, valeurs figees', async () => {
   assert.equal(day.totals.carbs_g, 116.3); // 150 g x 77,5 g / 100 g (CIQUAL 9100)
 });
 
+test('journal : recalcul depuis la base a la demande', async () => {
+  const oeuf = (await call('GET', '/foods?q=Oeuf')).body[0];
+  await call('POST', '/journal', { date: '2025-07-01', food_id: oeuf.id, quantity: 2 });
+  await call('POST', '/journal', { date: '2025-07-01', display_name: 'Libre', quantity: 1, unit: 'unit', kcal: 50, origin: 'free' });
+  await call('PUT', `/foods/${oeuf.id}`, { ...oeuf, kcal: 70, carbs_g: 1, fat_g: 5 });
+  let day = (await call('GET', '/journal?date=2025-07-01')).body;
+  assert.equal(day.totals.kcal, 134 + 50); // valeurs figees
+  const r = await call('POST', '/journal/recompute', { date: '2025-07-01' });
+  assert.equal(r.body.updated, 1);
+  day = (await call('GET', '/journal?date=2025-07-01')).body;
+  assert.equal(day.totals.kcal, 140 + 50);
+  assert.equal(day.totals.fat_g, 10);
+  assert.equal((await call('POST', '/journal/recompute', { date: '2025-07-01' })).body.updated, 0);
+  await call('PUT', `/foods/${oeuf.id}`, oeuf); // remet l'aliment d'origine pour les tests suivants
+});
+
 test('journal : saisie IA soumise a la meme validation', async () => {
   const bad = await call('POST', '/journal', { date: '2025-06-01', display_name: 'x', quantity: 999, unit: 'unit', kcal: 10, origin: 'ia' });
   assert.equal(bad.status, 400);

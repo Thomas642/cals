@@ -380,3 +380,5 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 0.5rem; }
 @media (min-width: 900px) {
   .page:has(.table-wrap) { max-width: 1100px; margin-left: calc(var(--sidebar) + max(0px, (100vw - var(--sidebar) - 1100px) / 2)); }
 }
+.recompute { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.6rem; }
+.recompute .link { padding-left: 0; }
