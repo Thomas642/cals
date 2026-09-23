@@ -13,7 +13,7 @@ La spécification complète est dans [`docs/cals-gdd-v2.md`](docs/cals-gdd-v2.md
 | Frontend | React 19 (SPA, Vite), servi par nginx |
 | Backend | Node.js 22 + Express 5 |
 | Base de données | SQLite (`better-sqlite3`), fichier sur volume Docker |
-| IA | API Anthropic, modèle `claude-haiku-4-5`, appelé uniquement par le backend |
+| IA | Google Gemini (`gemini-3.8-flash` par défaut) ou Anthropic Claude (`claude-haiku-4-5`), appelé uniquement par le backend |
 | Déploiement | Docker Compose (frontend nginx, backend, volume SQLite, tunnel Cloudflare optionnel) |
 
 ## Arborescence
@@ -23,7 +23,7 @@ backend/
   src/schema.sql          schéma SQLite (section 3 du GDD + routines + journal de charges)
   src/seed-data.js        aliments de l'annexe A
   src/lib/calc.js         moteur de calcul (section 4)
-  src/lib/assistant.js    intégration Claude (section 6)
+  src/lib/assistant.js    intégration IA Gemini / Claude (section 6)
   src/app.js              routes REST (section 5)
   test/                   tests (node:test)
 frontend/
@@ -46,7 +46,7 @@ cd backend && npm install && npm run dev
 cd frontend && npm install && npm run dev
 ```
 
-Pour activer l'assistant : `ANTHROPIC_API_KEY=... npm run dev` côté backend.
+Pour activer l'assistant : `GEMINI_API_KEY=... npm run dev` (ou `ANTHROPIC_API_KEY=...`) côté backend.
 Sans clé, l'application reste utilisable ; l'écran Assistant indique qu'il est désactivé (mode dégradé, section 6.5).
 
 Tests backend : `cd backend && npm test`.
@@ -65,16 +65,20 @@ Cals tourne dans ses propres conteneurs (projet Docker Compose `cals`) et n'éco
 
 ### Installation (une seule fois)
 
+Le dépôt est privé : le cloner avec ses identifiants GitHub, puis lancer le script depuis le clone.
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Thomas642/cals/MAIN/deploy/install.sh -o install.sh
-MODE=nginx bash install.sh     # nginx système + Certbot
+git clone git@github.com:Thomas642/cals.git ~/cals          # clé SSH GitHub sur le VPS
+# ou : git clone https://github.com/Thomas642/cals.git ~/cals  (jeton d'accès personnel comme mot de passe)
+
+MODE=nginx bash ~/cals/deploy/install.sh     # nginx système + Certbot
 # ou
-MODE=tunnel bash install.sh    # tunnel Cloudflare Zero Trust
+MODE=tunnel bash ~/cals/deploy/install.sh    # tunnel Cloudflare Zero Trust
 ```
 
 Le script :
 1. clone le dépôt dans `~/cals` (modifiable avec `APP_DIR=...`) ;
-2. crée `.env` (demande la clé API Anthropic, facultative) ;
+2. crée `.env` (demande la clé API Gemini, facultative) ;
 3. construit et démarre les conteneurs, puis vérifie `http://127.0.0.1:8080/api/health` ;
 4. mode `nginx` : demande un identifiant et un mot de passe d'accès, installe
    `deploy/nginx/cals.conf` dans `/etc/nginx/sites-available/cals`, recharge nginx, lance Certbot ;
@@ -114,6 +118,28 @@ Un export JSON complet est aussi disponible dans Réglages (`GET /api/export`).
 Ce dépôt contenait auparavant FamilyTracker. Si un clone de ce dépôt sert encore un site sur le VPS
 (l'ancienne configuration utilisait `/home/ubuntu/FamilyTracker`), **ne pas y faire de `git pull`** :
 il récupérerait Cals à la place de l'ancien code. Cals s'installe dans un dossier séparé (`~/cals`).
+
+## Assistant IA : Gemini ou Claude
+
+Le fournisseur est choisi selon la clé présente dans `.env` (Gemini prioritaire), ou forcé avec
+`AI_PROVIDER=gemini|anthropic`. Sans clé, l'assistant est désactivé et le reste de l'app fonctionne.
+
+- **Gemini** (défaut) : clé à créer sur Google AI Studio (https://aistudio.google.com, « Get API key »).
+  Modèle par défaut `gemini-3.8-flash`, modifiable avec `GEMINI_MODEL`.
+  D'après la page de tarifs Gemini consultée le 23/09/2026, ce modèle figure dans le niveau gratuit, et
+  pour ce niveau : « Content used to improve our products » (contenu utilisé par Google pour améliorer
+  ses produits) ; en niveau payant : « Content not used to improve our products ». Les questions
+  envoyées contiennent le profil (sexe, âge, poids, cibles) et le journal du jour.
+  Les quotas du niveau gratuit sont limités ; en cas de dépassement l'assistant affiche
+  « Quota Gemini atteint » et la saisie manuelle reste disponible.
+- **Claude** : clé sur https://console.anthropic.com, modèle `claude-haiku-4-5` (`CLAUDE_MODEL`).
+
+Ajouter ou changer la clé après installation :
+
+```bash
+nano ~/cals/.env                                  # GEMINI_API_KEY=...
+docker compose -f ~/cals/docker-compose.yml up -d
+```
 
 ## API
 
@@ -161,12 +187,14 @@ Autres décisions :
 - **Poids** : une mesure par jour ; la plus récente devient le poids du profil et déclenche le recalcul.
 - **Adhérence** : calculée sur les jours comportant au moins une entrée.
 - **Assistant** : prompt système de la section 6.4 repris tel quel ; contrat JSON de la section 6.3
-  imposé par les sorties structurées (`output_config.format`) puis revalidé côté serveur ; les
+  imposé par les sorties structurées (Gemini : `responseJsonSchema` ; Claude : `output_config.format`)
+  puis revalidé côté serveur ; les
   propositions invalides sont rejetées et signalées. L'historique de conversation (10 derniers
   messages) est renvoyé par le front à chaque appel.
-- **Prompt caching** : `cache_control` est posé sur le bloc « prompt système + base d'aliments ».
+- **Prompt caching (Claude uniquement)** : `cache_control` est posé sur le bloc « prompt système + base d'aliments ».
   D'après la documentation Anthropic, le préfixe minimal cachable pour Claude Haiku 4.5 est de
   4096 tokens : avec la base de 19 aliments le préfixe est plus court et le cache ne s'active pas ;
   il s'activera quand la base aura grossi. Vérifiable via `usage.cache_read_input_tokens` dans la
   réponse de `/api/assistant`.
-- Tarifs et noms de modèles évoluent : vérifier claude.com/pricing avant mise en production.
+- Tarifs, quotas gratuits et noms de modèles évoluent : vérifier https://ai.google.dev/gemini-api/docs/pricing
+  et https://claude.com/pricing avant mise en production.

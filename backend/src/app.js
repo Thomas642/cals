@@ -4,7 +4,7 @@ import { ageFromBirthDate, nutritionFor, round1, unitForFood } from './lib/calc.
 import { getProfile, profileView, recalcTargets, syncCurrentWeight } from './lib/profile-service.js';
 import { entriesForDate, insertEntry, remaining, totals } from './lib/journal-service.js';
 import { recipeView, saveRecipe, validateRecipe } from './lib/recipe-service.js';
-import { askAssistant, contextBlock, MODEL } from './lib/assistant.js';
+import { askAssistant, contextBlock, resolveModel, resolveProvider } from './lib/assistant.js';
 
 const notFound = (what) => Object.assign(new Error(`${what} introuvable`), { status: 404 });
 const today = () => new Date().toISOString().slice(0, 10);
@@ -20,7 +20,10 @@ export function createApp(db) {
   app.use(express.json({ limit: '1mb' }));
   const r = express.Router();
 
-  r.get('/health', (req, res) => res.json({ ok: true, ai_enabled: !!process.env.ANTHROPIC_API_KEY, model: MODEL }));
+  r.get('/health', (req, res) => {
+    const provider = resolveProvider();
+    res.json({ ok: true, ai_enabled: !!provider, ai_provider: provider, model: resolveModel(provider) });
+  });
 
   // ---------- Profil ----------
   r.get('/profile', (req, res) => res.json(profileView(db)));

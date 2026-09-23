@@ -1,8 +1,28 @@
-// Integration IA (GDD v2, section 6). Seul le backend appelle api.anthropic.com.
+// Integration IA (GDD v2, section 6). Seul le backend appelle le fournisseur d'IA.
+// Fournisseurs : Google Gemini (defaut si GEMINI_API_KEY est defini) ou Anthropic Claude.
 import Anthropic from '@anthropic-ai/sdk';
+import { ApiError as GeminiApiError, GoogleGenAI } from '@google/genai';
 import { ValidationError } from './validate.js';
 
-export const MODEL = process.env.CLAUDE_MODEL || 'claude-haiku-4-5';
+const DEFAULT_MODELS = { gemini: 'gemini-3.8-flash', anthropic: 'claude-haiku-4-5' };
+
+/** Fournisseur actif : AI_PROVIDER explicite, sinon celui dont la cle est presente. */
+export function resolveProvider(env = process.env) {
+  const wanted = (env.AI_PROVIDER || '').toLowerCase();
+  if (wanted === 'gemini' || wanted === 'anthropic') {
+    const key = wanted === 'gemini' ? env.GEMINI_API_KEY : env.ANTHROPIC_API_KEY;
+    return key ? wanted : null;
+  }
+  if (env.GEMINI_API_KEY) return 'gemini';
+  if (env.ANTHROPIC_API_KEY) return 'anthropic';
+  return null;
+}
+
+export function resolveModel(provider, env = process.env) {
+  if (provider === 'gemini') return env.GEMINI_MODEL || DEFAULT_MODELS.gemini;
+  if (provider === 'anthropic') return env.CLAUDE_MODEL || DEFAULT_MODELS.anthropic;
+  return null;
+}
 
 // Prompt systeme de la section 6.4, repris tel quel.
 export const SYSTEM_PROMPT = `Tu es l'assistant nutritionnel de l'application Cals. Tu aides un utilisateur unique
@@ -71,12 +91,8 @@ export class AssistantUnavailableError extends Error {
   }
 }
 
-let client = null;
-function getClient() {
-  if (!process.env.ANTHROPIC_API_KEY) throw new AssistantUnavailableError('Cle ANTHROPIC_API_KEY absente : assistant desactive');
-  if (!client) client = new Anthropic();
-  return client;
-}
+let anthropicClient = null;
+let geminiClient = null;
 
 /** Base d'aliments serialisee de facon deterministe (ordre par id) pour le cache de prompt. */
 export function foodsBlock(foods) {
@@ -154,19 +170,73 @@ export function parseAssistantOutput(text) {
   return { answer: data.answer, proposed_entries: entries, rejected_entries: rejected, confidence };
 }
 
+const REFUSED = { answer: 'Demande refusee par le modele.', proposed_entries: [], rejected_entries: [], confidence: 'faible' };
+
 /**
- * Appel a l'API Claude. history : [{ role: 'user'|'assistant', content: string }].
+ * Pose la question au fournisseur actif. history : [{ role: 'user'|'assistant', content: string }].
  */
 export async function askAssistant({ message, history, foods, context }) {
-  const anthropic = getClient();
-  const messages = [
-    ...history,
-    { role: 'user', content: `${context}\n\nQUESTION :\n${message}` },
-  ];
+  const provider = resolveProvider();
+  if (!provider) throw new AssistantUnavailableError('Aucune cle API d\'IA configuree : assistant desactive');
+  const userText = `${context}\n\nQUESTION :\n${message}`;
+  const model = resolveModel(provider);
+  return provider === 'gemini'
+    ? askGemini({ model, history, userText, foods })
+    : askClaude({ model, history, userText, foods });
+}
+
+/** Requete Gemini (generateContent + sortie JSON contrainte par responseJsonSchema). */
+export function buildGeminiRequest({ model, history, userText, foods }) {
+  return {
+    model,
+    contents: [
+      ...history.map((h) => ({ role: h.role === 'assistant' ? 'model' : 'user', parts: [{ text: h.content }] })),
+      { role: 'user', parts: [{ text: userText }] },
+    ],
+    config: {
+      systemInstruction: `${SYSTEM_PROMPT}\n\n${foodsBlock(foods)}`,
+      responseMimeType: 'application/json',
+      responseJsonSchema: OUTPUT_SCHEMA,
+      maxOutputTokens: 8192,
+    },
+  };
+}
+
+async function askGemini(args) {
+  if (!geminiClient) {
+    // GEMINI_BASE_URL : uniquement pour les tests (faux serveur local).
+    const base = process.env.GEMINI_BASE_URL;
+    geminiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, ...(base ? { httpOptions: { baseUrl: base } } : {}) });
+  }
   let response;
   try {
-    response = await anthropic.messages.create({
-      model: MODEL,
+    response = await geminiClient.models.generateContent(buildGeminiRequest(args));
+  } catch (err) {
+    if (err instanceof GeminiApiError) {
+      if (err.status === 429) throw new AssistantUnavailableError('Quota Gemini atteint, reessayer plus tard');
+      if (err.status === 400 || err.status === 401 || err.status === 403) throw new AssistantUnavailableError(`Requete ou cle Gemini refusee (${err.status})`);
+      throw new AssistantUnavailableError(`API Gemini indisponible (${err.status})`);
+    }
+    throw new AssistantUnavailableError('API Gemini injoignable');
+  }
+  const finish = response.candidates?.[0]?.finishReason;
+  const usage = response.usageMetadata;
+  if (finish === 'SAFETY' || finish === 'PROHIBITED_CONTENT' || finish === 'BLOCKLIST' || response.promptFeedback?.blockReason) {
+    return { ...REFUSED, usage };
+  }
+  if (finish === 'MAX_TOKENS') throw new AssistantUnavailableError('Reponse IA tronquee');
+  const text = response.text;
+  if (!text) throw new AssistantUnavailableError('Reponse IA vide');
+  return { ...parseAssistantOutput(text), usage };
+}
+
+async function askClaude({ model, history, userText, foods }) {
+  if (!anthropicClient) anthropicClient = new Anthropic();
+  const messages = [...history, { role: 'user', content: userText }];
+  let response;
+  try {
+    response = await anthropicClient.messages.create({
+      model,
       max_tokens: 4096,
       // Prompt caching : prompt systeme + base d'aliments (partie stable, repetee a chaque appel).
       system: [
@@ -182,9 +252,7 @@ export async function askAssistant({ message, history, foods, context }) {
     if (err instanceof Anthropic.APIError) throw new AssistantUnavailableError(`API Claude indisponible (${err.status ?? 'reseau'})`);
     throw new AssistantUnavailableError('API Claude injoignable');
   }
-  if (response.stop_reason === 'refusal') {
-    return { answer: 'Demande refusee par le modele.', proposed_entries: [], rejected_entries: [], confidence: 'faible', usage: response.usage };
-  }
+  if (response.stop_reason === 'refusal') return { ...REFUSED, usage: response.usage };
   if (response.stop_reason === 'max_tokens') throw new AssistantUnavailableError('Reponse IA tronquee');
   const text = response.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
   return { ...parseAssistantOutput(text), usage: response.usage };

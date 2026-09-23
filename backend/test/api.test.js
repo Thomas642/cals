@@ -4,6 +4,8 @@ import { openDatabase, seedFoods } from '../src/db.js';
 import { createApp } from '../src/app.js';
 
 delete process.env.ANTHROPIC_API_KEY;
+delete process.env.GEMINI_API_KEY;
+delete process.env.AI_PROVIDER;
 const db = openDatabase(':memory:');
 seedFoods(db);
 const server = createApp(db).listen(0);

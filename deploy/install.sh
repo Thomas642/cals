@@ -2,10 +2,10 @@
 # ════════════════════════════════════════════════════════════════════════════
 #  Cals — premiere installation sur le VPS (Ubuntu/Debian, Docker deja installe)
 #
-#  Usage (depuis n'importe ou) :
-#    curl -fsSL https://raw.githubusercontent.com/Thomas642/cals/MAIN/deploy/install.sh -o install.sh
-#    MODE=nginx bash install.sh        # nginx systeme + Certbot (comme l'ancien FamilyTracker)
-#    MODE=tunnel bash install.sh       # tunnel Cloudflare Zero Trust existant
+#  Usage (depot prive : cloner d'abord avec ses identifiants GitHub) :
+#    git clone git@github.com:Thomas642/cals.git ~/cals
+#    MODE=nginx bash ~/cals/deploy/install.sh    # nginx systeme + Certbot
+#    MODE=tunnel bash ~/cals/deploy/install.sh   # tunnel Cloudflare Zero Trust existant
 #
 #  Variables optionnelles :
 #    APP_DIR   dossier d'installation          (defaut : $HOME/cals)
@@ -53,8 +53,8 @@ say "Fichier .env"
 if [[ ! -f .env ]]; then
   cp .env.example .env
   sed -i "s/^CALS_HTTP_PORT=.*/CALS_HTTP_PORT=$PORT/" .env
-  read -rp "Cle API Anthropic (Entree pour laisser l'IA desactivee) : " KEY || true
-  if [[ -n "${KEY:-}" ]]; then sed -i "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=$KEY|" .env; fi
+  read -rp "Cle API Gemini (https://aistudio.google.com, Entree pour laisser l'IA desactivee) : " KEY || true
+  if [[ -n "${KEY:-}" ]]; then sed -i "s|^GEMINI_API_KEY=.*|GEMINI_API_KEY=$KEY|" .env; fi
   if [[ "$MODE" == "tunnel" ]]; then
     read -rp "Jeton du tunnel Cloudflare (Entree si un cloudflared tourne deja sur le VPS) : " TOK || true
     if [[ -n "${TOK:-}" ]]; then sed -i "s|^CLOUDFLARE_TUNNEL_TOKEN=.*|CLOUDFLARE_TUNNEL_TOKEN=$TOK|" .env; fi
