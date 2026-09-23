@@ -65,7 +65,7 @@ test('onboarding puis cibles calculees', async () => {
   const { status, body } = await call('PUT', '/profile', profile);
   assert.equal(status, 200);
   assert.ok(body.target_kcal > 1500);
-  assert.equal(body.target_protein_g, 160);
+  assert.equal(body.target_protein_g, 176);
   assert.equal((await call('GET', '/weights')).body.length, 1);
 });
 
@@ -118,7 +118,7 @@ test('poids : recalcul des cibles', async () => {
   await call('POST', '/weights', { date: '2099-01-01', weight_kg: 75 });
   const p = (await call('GET', '/profile')).body;
   assert.equal(p.weight_kg, 75);
-  assert.equal(p.target_protein_g, 150);
+  assert.equal(p.target_protein_g, 165);
 });
 
 test('cibles manuelles prioritaires', async () => {

@@ -181,9 +181,9 @@ Paramètres que le GDD donne sous forme de fourchette, fixés ici (modifiables d
 | Paramètre | Fourchette GDD | Valeur retenue |
 |---|---|---|
 | Surplus `gain` | 5 à 15 % | light 5 %, moderate 10 %, aggressive 15 % |
-| Protéines `fat_loss` | 2,0 à 2,2 g/kg | 2,0 g/kg |
+| Protéines `fat_loss` | 2,0 à 2,2 g/kg | 2,2 g/kg |
 | Protéines `maintain` / `gain` | 1,6 à 2,2 g/kg | 1,8 g/kg |
-| Lipides | 0,8 à 1 g/kg | 0,9 g/kg |
+| Lipides | 0,8 à 1 g/kg | 0,8 g/kg |
 | Glucides | reste des calories | (kcal − 4 × P − 9 × L) / 4 |
 
 Autres décisions :

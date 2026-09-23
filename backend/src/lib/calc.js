@@ -15,12 +15,12 @@ export const GOAL_ADJUSTMENT = {
   gain: { light: 0.05, moderate: 0.10, aggressive: 0.15 },
 };
 
-// Proteines g/kg : 2,0 en fat_loss (bas de la fourchette 2,0-2,2 de la section 4.4),
+// Proteines g/kg : 2,2 en fat_loss (haut de la fourchette 2,0-2,2 de la section 4.4),
 // 1,8 sinon (dans la fourchette 1,6-2,2).
-export const PROTEIN_PER_KG = { fat_loss: 2.0, maintain: 1.8, gain: 1.8 };
+export const PROTEIN_PER_KG = { fat_loss: 2.2, maintain: 1.8, gain: 1.8 };
 
-// Lipides : 0,8 a 1 g/kg minimum (section 4.5) ; valeur retenue : 0,9 g/kg.
-export const FAT_PER_KG = 0.9;
+// Lipides : 0,8 a 1 g/kg minimum (section 4.5) ; valeur retenue : 0,8 g/kg.
+export const FAT_PER_KG = 0.8;
 
 // Facteurs d'Atwater generaux (kcal/g).
 const KCAL_PER_G = { protein: 4, carbs: 4, fat: 9 };
