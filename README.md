@@ -75,6 +75,20 @@ Lecteur maison, identique sur tous les navigateurs :
 - Pas de bouton de téléchargement ni de menu « Enregistrer la vidéo » ; le temps réellement regardé est compté
   pour les statistiques.
 
+### Bibliothèque
+
+- **Saisons / arcs** : la saison est lue dans le nom du fichier (`S02E05`, `Saison 2`, `ARC 02`, `Part 2`, `第2期`).
+  Onglets sur la page de la série dès qu'il y en a plusieurs ; « Renommer » (mode gestion) pour leur donner un nom
+  (ex. « Arc 2 · Les îles »). La saison d'un épisode se change avec le crayon.
+- **Ordre des épisodes** (mode gestion) : glisser par la poignée, ou flèches ↑/↓. Le crayon permet aussi de
+  **déplacer un épisode vers une autre série**.
+- **Ma liste** : bouton sur la page d'une série ; rangée « Ma liste » en haut de l'accueil.
+- **Vu / non vu à la main** : bouton œil sur chaque épisode, et « Tout marquer comme vu » pour la saison affichée.
+- **Nouveautés** : badge « Nouveau » sur les épisodes mis en ligne depuis la visite précédente de la personne (une
+  visite commence après 30 min d'absence) ; rangée « Récemment ajoutés » sur l'accueil.
+- **Statistiques** (tableau de bord) : temps regardé et épisodes terminés par personne, épisodes les plus regardés,
+  temps par série. Le temps compté est celui réellement passé à lire dans le lecteur.
+
 ### Tableau de bord (administrateurs)
 
 Menu du compte > **Tableau de bord** (`/admin`), actualisé toutes les 10 secondes :

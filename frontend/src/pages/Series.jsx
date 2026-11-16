@@ -4,10 +4,10 @@ import { api } from '../api.js';
 import { useApi } from '../hooks.js';
 import { enqueueUpload, useUploads } from '../uploads.js';
 import {
-  SUBTITLE_EXT, SUBTITLE_LANGS, VIDEO_EXT, episodeLabel, formatBytes, guessEpisodeNumber, guessSubtitleLang,
-  isSubtitle, isVideo, readTextFile,
+  SUBTITLE_EXT, SUBTITLE_LANGS, VIDEO_EXT, episodeLabel, formatBytes, guessEpisodeNumber, guessSeason, guessSubtitleLang,
+  friendlyError, isSubtitle, isVideo, readTextFile, seasonName,
 } from '../files.js';
-import { nextToWatch, progressOf, useProgress } from '../progress.js';
+import { markUnwatched, markWatched, nextToWatch, progressOf, useProgress } from '../progress.js';
 import { useManage } from '../manage.js';
 import Icon from '../components/Icon.jsx';
 import Poster from '../components/Poster.jsx';
@@ -39,16 +39,62 @@ export default function Series({ user }) {
   const jobs = useUploads();
   useProgress();
 
+  const [season, setSeason] = useState(null);
+  const [dragId, setDragId] = useState(null);
+
   // Pendant une conversion, la page se rafraichit toute seule (progression, miniature, pistes extraites).
   useEffect(() => { setPoll(!!series?.episodes.some((e) => isProcessing(e))); }, [series]);
+  useEffect(() => { setSeason(null); }, [id]);
 
   if (error) return <><BackLink /><p className="alert">{error.message}</p></>;
-  if (!series) return <><BackLink /><div className="series-hero sk-block" /></>;
+  if (!series) return <SeriesSkeleton />;
 
   const episodes = series.episodes;
   const ready = episodes.filter((e) => e.status === 'ready');
   const next = nextToWatch(episodes);
   const subtitled = ready.filter((e) => e.subtitles.length).length;
+  const visible = episodes.filter((e) => manage || e.status === 'ready' || jobs.some((j) => j.episodeId === e.id));
+  const seasons = [...new Set(visible.map((e) => e.season || 1))].sort((a, b) => a - b);
+  // Saison affichee : choisie, sinon celle de l'episode a lancer, sinon la premiere.
+  const current = seasons.includes(season) ? season : (seasons.includes(next?.episode.season) ? next.episode.season : seasons[0]);
+  const shown = seasons.length > 1 ? visible.filter((e) => (e.season || 1) === current) : visible;
+  const shownReady = shown.filter((e) => e.status === 'ready');
+  const allSeen = shownReady.length > 0 && shownReady.every((e) => progressOf(e.id)?.watched);
+  const info = (e) => ({ seriesId: series.id, seriesTitle: series.title, label: episodeLabel({ number: e.number }), thumb: e.thumb_url });
+
+  function toggleSeason() {
+    if (allSeen) shownReady.forEach((e) => markUnwatched(e.id));
+    else shownReady.filter((e) => !progressOf(e.id)?.watched).forEach((e) => markWatched(e.id, e.media?.duration || 0, info(e), { manual: true }));
+  }
+
+  async function toggleList() {
+    try { await api[series.in_list ? 'del' : 'put'](`/watchlist/${series.id}`); } catch (err) { window.alert(err.message); }
+  }
+
+  async function renameSeason() {
+    const name = window.prompt(`Nom de la ${seasonName(series, current).toLowerCase().startsWith('saison') ? 'saison' : 'partie'} ${current} (vide pour « Saison ${current} ») :`, series.season_names?.[current] || '');
+    if (name === null) return;
+    try { await api.put(`/series/${series.id}`, { title: series.title, description: series.description, season_names: { ...series.season_names, [current]: name } }); } catch (err) { window.alert(err.message); }
+  }
+
+  // Glisser-deposer : nouvel ordre de la saison affichee, les autres saisons gardent le leur.
+  async function dropOn(targetId) {
+    if (!dragId || dragId === targetId) { setDragId(null); return; }
+    const ids = shown.map((e) => e.id).filter((x) => x !== dragId);
+    ids.splice(ids.indexOf(targetId), 0, dragId);
+    const order = seasons.flatMap((n) => (n === current || seasons.length === 1 ? ids : visible.filter((e) => (e.season || 1) === n).map((e) => e.id)));
+    setDragId(null);
+    try { await api.put(`/series/${series.id}/order`, { episodes: order }); } catch (err) { window.alert(err.message); }
+  }
+  async function moveBy(e, delta) {
+    const ids = shown.map((x) => x.id);
+    const i = ids.indexOf(e.id);
+    const j = i + delta;
+    if (j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    const order = seasons.flatMap((n) => (n === current || seasons.length === 1 ? ids : visible.filter((x) => (x.season || 1) === n).map((x) => x.id)));
+    try { await api.put(`/series/${series.id}/order`, { episodes: order }); } catch (err) { window.alert(err.message); }
+  }
 
   return (
     <>
@@ -71,13 +117,16 @@ export default function Series({ user }) {
                 {ready.length > 0 && <> · {subtitled === ready.length ? <span className="tag">VOSTFR</span> : `${subtitled} sous-titré${subtitled > 1 ? 's' : ''}`}</>}
               </p>
               {series.description && <p className="hero-desc">{series.description}</p>}
-              {next && (
-                <div className="row-actions start">
+              <div className="row-actions start">
+                {next && (
                   <Link className="button primary big-btn" to={`/regarder/${next.episode.id}`}>
-                    <Icon name="play" size={18} /> {next.resume ? 'Reprendre' : next.restart ? 'Revoir depuis le début' : 'Lecture'} · {episodeLabel({ number: next.episode.number })}
+                    <Icon name="play" size={18} /> {next.resume ? 'Reprendre' : next.restart ? 'Revoir depuis le début' : 'Lecture'} · {seasons.length > 1 ? `${seasonName(series, next.episode.season)} · ` : ''}{episodeLabel({ number: next.episode.number })}
                   </Link>
-                </div>
-              )}
+                )}
+                <button className={`button glass big-btn${series.in_list ? ' in-list' : ''}`} onClick={toggleList} aria-pressed={series.in_list}>
+                  <Icon name={series.in_list ? 'bookmarkOn' : 'bookmark'} size={18} /> {series.in_list ? 'Dans ma liste' : 'Ma liste'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -86,13 +135,36 @@ export default function Series({ user }) {
       {manage && <ManagePanel series={series} />}
 
       <section className="shelf">
-        <h2>Épisodes</h2>
+        <div className="shelf-head episodes-head">
+          <h2>Épisodes</h2>
+          {shownReady.length > 0 && (
+            <button className="ghost-btn small-btn" onClick={toggleSeason}>
+              <Icon name="eyeCheck" size={15} /> {allSeen ? 'Tout marquer comme non vu' : `Tout marquer comme vu${seasons.length > 1 ? ' (cette saison)' : ''}`}
+            </button>
+          )}
+        </div>
+        {seasons.length > 1 && (
+          <div className="season-tabs" role="tablist" aria-label="Saisons">
+            {seasons.map((n) => (
+              <button key={n} role="tab" aria-selected={n === current} className={n === current ? 'sel' : ''} onClick={() => setSeason(n)}>
+                {seasonName(series, n)}
+                <span className="count">{visible.filter((e) => (e.season || 1) === n).length}</span>
+              </button>
+            ))}
+            {manage && <button className="link small" onClick={renameSeason}><Icon name="edit" size={14} /> Renommer</button>}
+          </div>
+        )}
+        {manage && seasons.length === 1 && episodes.length > 0 && (
+          <p className="muted small">Astuce : pour créer une saison 2 (ou un arc), modifie le numéro de saison d'un épisode avec le crayon. Glisse les épisodes par la poignée pour changer leur ordre.</p>
+        )}
         {episodes.length === 0 ? (
-          <p className="empty">{manage ? 'Aucun épisode : glisse les vidéos dans la zone d\'import ci-dessus.' : 'Aucun épisode pour l\'instant. Active « Gérer » en haut pour importer des vidéos.'}</p>
+          <p className="empty">{manage ? 'Aucun épisode : glisse les vidéos dans la zone d\'import ci-dessus.' : 'Aucun épisode pour l\'instant.'}</p>
         ) : (
           <ul className="episode-list">
-            {episodes.filter((e) => manage || e.status === 'ready' || jobs.some((j) => j.episodeId === e.id)).map((e) => (
-              <EpisodeRow key={e.id} episode={e} series={series} manage={manage} job={jobs.find((j) => j.episodeId === e.id)} />
+            {shown.map((e, i) => (
+              <EpisodeRow key={e.id} episode={e} series={series} manage={manage} job={jobs.find((j) => j.episodeId === e.id)}
+                dragging={dragId === e.id} onDragStart={() => setDragId(e.id)} onDrop={() => dropOn(e.id)} onDragEnd={() => setDragId(null)}
+                onMove={(d) => moveBy(e, d)} first={i === 0} last={i === shown.length - 1} info={info(e)} activeSeason={current} />
             ))}
           </ul>
         )}
@@ -116,7 +188,7 @@ function ProcessingInfo({ episode: e, manage }) {
     if (!manage) return null;
     return (
       <div className="processing failed small">
-        Conversion impossible : {e.processing_error}{' '}
+        <span title={e.processing_error}>Conversion impossible : {friendlyError(e.processing_error)}</span>{' '}
         <button className="link" onClick={retry} disabled={busy}>Réessayer</button>
       </div>
     );
@@ -159,6 +231,18 @@ function SubtitleTag({ sub: s, manage, onRemove }) {
   );
 }
 
+function SeriesSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Chargement">
+      <div className="series-hero sk-block" />
+      <div className="sk-line w30" />
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="episode-row"><div className="thumb sk-block" /><div><div className="sk-line w50" /><div className="sk-line w30" /></div></div>
+      ))}
+    </div>
+  );
+}
+
 function BackLink() {
   return <Link to="/" className="back"><Icon name="chevronLeft" size={18} /> Bibliothèque</Link>;
 }
@@ -195,21 +279,24 @@ function ManagePanel({ series }) {
           lines.push({ ok: true, text: `${f.name} → reprise de l'envoi de l'épisode ${unfinished.number}` });
           continue;
         }
+        const season = guessSeason(f.name) ?? 1;
         let number = guessEpisodeNumber(f.name);
-        if (number === null || known.some((e) => e.number === number)) number = nextNumber;
+        if (number === null || known.some((e) => e.number === number && (e.season || 1) === season)) number = nextNumber;
         nextNumber = Math.max(nextNumber, Math.floor(number) + 1);
         try {
-          const ep = await api.post(`/series/${series.id}/episodes`, { filename: f.name, size: f.size, number });
+          const ep = await api.post(`/series/${series.id}/episodes`, { filename: f.name, size: f.size, number, season });
           known.push(ep);
           enqueueUpload(ep, f);
-          lines.push({ ok: true, text: `${f.name} → épisode ${number} (envoi lancé)` });
+          lines.push({ ok: true, text: `${f.name} → ${season > 1 ? `saison ${season}, ` : ''}épisode ${number} (envoi lancé)` });
         } catch (err) {
           lines.push({ ok: false, text: `${f.name} : ${err.message}` });
         }
       }
       for (const f of subs) {
         const number = guessEpisodeNumber(f.name);
-        const target = number !== null ? known.find((e) => e.number === number) : (known.length === 1 ? known[0] : null);
+        const subSeason = guessSeason(f.name);
+        const candidates = number !== null ? known.filter((e) => e.number === number && (subSeason === null || (e.season || 1) === subSeason)) : [];
+        const target = number !== null ? (candidates.find((e) => (e.season || 1) === 1) || candidates[0]) : (known.length === 1 ? known[0] : null);
         if (!target) {
           lines.push({ ok: false, text: `${f.name} : aucun épisode ${number ?? ''} trouvé. Utilise « + Sous-titres » sur l'épisode.` });
           continue;
@@ -318,10 +405,14 @@ function EditSeries({ series, onClose }) {
   );
 }
 
-function EpisodeRow({ episode: e, series, manage, job }) {
+function EpisodeRow({ episode: e, series, manage, job, dragging, onDragStart, onDrop, onDragEnd, onMove, first, last, info }) {
   const [editing, setEditing] = useState(false);
   const [number, setNumber] = useState(e.number ?? '');
   const [title, setTitle] = useState(e.title || '');
+  const [seasonField, setSeasonField] = useState(e.season || 1);
+  const [target, setTarget] = useState(e.series_id);
+  const [over, setOver] = useState(false);
+  const { data: allSeries } = useApi(editing ? '/series' : null);
   const [error, setError] = useState(null);
   const [subBusy, setSubBusy] = useState(false);
   const subInput = useRef(null);
@@ -334,7 +425,10 @@ function EpisodeRow({ episode: e, series, manage, job }) {
   async function save(ev) {
     ev.preventDefault();
     try {
-      await api.put(`/episodes/${e.id}`, { number: number === '' ? null : Number(String(number).replace(',', '.')), title });
+      await api.put(`/episodes/${e.id}`, {
+        number: number === '' ? null : Number(String(number).replace(',', '.')), title,
+        season: Number(seasonField) || 1, series_id: Number(target),
+      });
       setEditing(false);
       setError(null);
     } catch (err) {
@@ -384,23 +478,49 @@ function EpisodeRow({ episode: e, series, manage, job }) {
     else uploadText = `Envoi : ${pct} % · ${formatBytes(job.sent)} / ${formatBytes(job.size)}`;
   }
 
-  const thumb = <Thumb src={e.thumb_url} seed={series.title} number={e.number} progress={progress} watched={progress?.watched} playable={ready} />;
+  const thumb = <Thumb src={e.thumb_url} seed={series.title} number={e.number} progress={progress} watched={progress?.watched} playable={ready} storyboard={e.storyboard} />;
+  const dnd = manage && !editing ? {
+    draggable: true,
+    onDragStart: (ev) => { ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', String(e.id)); onDragStart?.(); },
+    onDragOver: (ev) => { ev.preventDefault(); setOver(true); },
+    onDragLeave: () => setOver(false),
+    onDrop: (ev) => { ev.preventDefault(); setOver(false); onDrop?.(); },
+    onDragEnd: () => { setOver(false); onDragEnd?.(); },
+  } : {};
 
   return (
-    <li className={`episode-row${ready ? '' : ' pending'}`}>
+    <li className={`episode-row${ready ? '' : ' pending'}${dragging ? ' dragging' : ''}${over ? ' drop-over' : ''}`} {...dnd}>
+      {manage && !editing && (
+        <div className="reorder">
+          <span className="grip" title="Glisser pour changer l'ordre" aria-hidden="true"><Icon name="grip" size={18} /></span>
+          <button className="icon-btn ghost tiny" onClick={() => onMove?.(-1)} disabled={first} aria-label="Monter"><Icon name="chevronUp" size={14} /></button>
+          <button className="icon-btn ghost tiny" onClick={() => onMove?.(1)} disabled={last} aria-label="Descendre"><Icon name="chevronDown" size={14} /></button>
+        </div>
+      )}
       {ready ? <Link to={`/regarder/${e.id}`} className="episode-thumb" aria-label={`Regarder ${episodeLabel(e)}`}>{thumb}</Link> : <div className="episode-thumb">{thumb}</div>}
 
       <div className="episode-body">
         {editing ? (
           <form className="episode-edit" onSubmit={save}>
-            <input aria-label="Numéro" inputMode="decimal" value={number} onChange={(ev) => setNumber(ev.target.value)} placeholder="N°" />
-            <input aria-label="Titre" value={title} onChange={(ev) => setTitle(ev.target.value)} placeholder="Titre (facultatif)" maxLength={300} />
-            <button className="primary" type="submit" aria-label="Enregistrer"><Icon name="check" size={16} /></button>
-            <button type="button" className="ghost-btn" onClick={() => setEditing(false)} aria-label="Annuler"><Icon name="close" size={16} /></button>
+            <label className="mini">Saison<input aria-label="Saison" inputMode="numeric" value={seasonField} onChange={(ev) => setSeasonField(ev.target.value)} /></label>
+            <label className="mini">N°<input aria-label="Numéro" inputMode="decimal" value={number} onChange={(ev) => setNumber(ev.target.value)} /></label>
+            <label className="grow">Titre<input aria-label="Titre" value={title} onChange={(ev) => setTitle(ev.target.value)} placeholder="(facultatif)" maxLength={300} /></label>
+            <label className="grow">Série
+              <select value={target} onChange={(ev) => setTarget(ev.target.value)} aria-label="Déplacer vers la série">
+                {(allSeries || [{ id: series.id, title: series.title }]).map((x) => <option key={x.id} value={x.id}>{x.title}</option>)}
+              </select>
+            </label>
+            <div className="edit-btns">
+              <button className="primary" type="submit" aria-label="Enregistrer"><Icon name="check" size={16} /></button>
+              <button type="button" className="ghost-btn" onClick={() => setEditing(false)} aria-label="Annuler"><Icon name="close" size={16} /></button>
+            </div>
           </form>
         ) : (
           <>
-            {ready ? <Link to={`/regarder/${e.id}`} className="episode-title">{episodeLabel(e)}</Link> : <span className="episode-title">{episodeLabel(e)}</span>}
+            <div className="episode-title-row">
+              {ready ? <Link to={`/regarder/${e.id}`} className="episode-title">{episodeLabel(e)}</Link> : <span className="episode-title">{episodeLabel(e)}</span>}
+              {e.is_new && <span className="badge-new">Nouveau</span>}
+            </div>
             <div className="episode-meta">
               {needsConversion(e) && !manage && <span className="tag info">En préparation…</span>}
               {e.subtitles.map((s) => <SubtitleTag key={s.id} sub={s} manage={manage} onRemove={() => removeSubtitle(s)} />)}
@@ -427,8 +547,25 @@ function EpisodeRow({ episode: e, series, manage, job }) {
         {error && <p className="alert small">{error}</p>}
       </div>
 
+      {ready && !editing && !manage && (
+        <div className="episode-actions">
+          <button className={`icon-btn ghost seen-btn${progress?.watched ? ' on' : ''}`}
+            onClick={() => (progress?.watched ? markUnwatched(e.id) : markWatched(e.id, e.media?.duration || 0, info, { manual: true }))}
+            aria-pressed={!!progress?.watched} aria-label={progress?.watched ? 'Marquer comme non vu' : 'Marquer comme vu'}
+            title={progress?.watched ? 'Marquer comme non vu' : 'Marquer comme vu'}>
+            <Icon name="eyeCheck" size={18} />
+          </button>
+        </div>
+      )}
       {manage && !editing && (
         <div className="episode-actions">
+          {ready && (
+            <button className={`icon-btn ghost seen-btn${progress?.watched ? ' on' : ''}`}
+              onClick={() => (progress?.watched ? markUnwatched(e.id) : markWatched(e.id, e.media?.duration || 0, info, { manual: true }))}
+              aria-label={progress?.watched ? 'Marquer comme non vu' : 'Marquer comme vu'} title={progress?.watched ? 'Marquer comme non vu' : 'Marquer comme vu'}>
+              <Icon name="eyeCheck" size={18} />
+            </button>
+          )}
           <button className="ghost-btn small-btn" onClick={() => subInput.current?.click()} disabled={subBusy}>
             {subBusy ? <span className="spinner" /> : <Icon name="plus" size={14} />} Sous-titres
           </button>

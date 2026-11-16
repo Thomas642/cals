@@ -353,4 +353,13 @@ test('lecteur et bibliotheque : reglages, generique, saisons, ordre, deplacement
   // Vu a la main : compte comme vu, pas comme une lecture complete
   await call('PUT', `/progress/${b}`, { pos: 0, dur: 0, watched: true, manual: true });
   assert.equal(db.prepare('SELECT completions FROM watch_progress WHERE episode_id = ?').get(b).completions, 0);
+
+  // Statistiques du tableau de bord
+  const stats = (await call('GET', '/admin/overview')).body.stats;
+  const me = stats.by_user.find((u) => u.username === 'moi');
+  assert.equal(me.seconds, 150);
+  assert.equal(me.completed, 1);
+  const top = stats.top_episodes.find((x) => x.id === a);
+  assert.deepEqual({ viewers: top.viewers, completions: top.completions, seconds: top.seconds }, { viewers: 1, completions: 1, seconds: 150 });
+  assert.equal(stats.by_series.find((x) => x.id === s.id).seconds, 150);
 });

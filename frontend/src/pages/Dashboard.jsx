@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useApi } from '../hooks.js';
-import { episodeLabel, formatBytes, hueOf } from '../files.js';
+import { episodeLabel, formatBytes, friendlyError, hueOf } from '../files.js';
 import Icon from '../components/Icon.jsx';
 
 // Seuils d'espace libre (part du disque) : en dessous, alerte.
@@ -27,15 +27,6 @@ function ago(sqlDate) {
   if (h < 24) return `il y a ${h} h`;
   const d = Math.round(h / 24);
   return `il y a ${d} j`;
-}
-
-// Erreur ffmpeg brute -> phrase comprehensible (le detail reste dans l'infobulle).
-function friendlyError(err) {
-  const e = String(err || '');
-  if (/Invalid data|moov atom not found|could not find codec|Invalid argument/i.test(e)) return 'Fichier vidéo endommagé ou incomplet : ffmpeg ne peut pas le lire. Réimporte la vidéo.';
-  if (/Espace disque/i.test(e)) return e;
-  if (/No such file/i.test(e)) return 'Fichier vidéo introuvable sur le serveur.';
-  return e.length > 160 ? `${e.slice(0, 160)}…` : e;
 }
 
 /** Statut avec icone + libelle (jamais la couleur seule). */
@@ -151,6 +142,61 @@ export default function Dashboard() {
                 </li>
               ))}
             </ul>
+          )}
+        </section>
+
+        {/* ── Statistiques de visionnage ─────────────────────── */}
+        <section className="card stats-card">
+          <h2><Icon name="chart" size={18} /> Statistiques de visionnage</h2>
+          {o.stats.by_user.every((u) => !u.seconds && !u.completed) ? (
+            <p className="empty">Pas encore de visionnage enregistré. Le temps regardé est compté par le lecteur.</p>
+          ) : (
+            <>
+              <h3 className="sub-h">Temps regardé par personne</h3>
+              <ul className="bar-list">
+                {o.stats.by_user.filter((u) => u.seconds > 0 || u.completed > 0).map((u) => {
+                  const max = Math.max(1, ...o.stats.by_user.map((x) => x.seconds));
+                  const name = u.display_name || u.username;
+                  return (
+                    <li key={u.id} title={`${name} : ${formatDuration(u.seconds)}, ${u.completed} épisode${u.completed > 1 ? 's' : ''} terminé${u.completed > 1 ? 's' : ''}`}>
+                      <span className="bar-name">{name}</span>
+                      <span className="bar-track"><span className="bar-fill" style={{ width: `${Math.max(1.5, pct(u.seconds, max))}%` }} /></span>
+                      <span className="bar-value">{formatDuration(u.seconds)} <span className="muted">· {u.completed} terminé{u.completed > 1 ? 's' : ''}</span></span>
+                    </li>
+                  );
+                })}
+              </ul>
+              {o.stats.top_episodes.length > 0 && (
+                <>
+                  <h3 className="sub-h">Épisodes les plus regardés</h3>
+                  <ol className="rank-list">
+                    {o.stats.top_episodes.map((e) => (
+                      <li key={e.id}>
+                        <Link to={`/regarder/${e.id}`}>{e.series_title} · {episodeLabel({ number: e.number })}</Link>
+                        <span className="muted small">{e.viewers} personne{e.viewers > 1 ? 's' : ''} · {formatDuration(e.seconds)}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </>
+              )}
+              {o.stats.by_series.length > 1 && (
+                <>
+                  <h3 className="sub-h">Par série</h3>
+                  <ul className="bar-list">
+                    {o.stats.by_series.map((x) => {
+                      const max = Math.max(1, ...o.stats.by_series.map((y) => y.seconds));
+                      return (
+                        <li key={x.id} title={`${x.title} : ${formatDuration(x.seconds)}, ${x.viewers} personne(s)`}>
+                          <Link to={`/serie/${x.id}`} className="bar-name">{x.title}</Link>
+                          <span className="bar-track"><span className="bar-fill" style={{ width: `${Math.max(1.5, pct(x.seconds, max))}%` }} /></span>
+                          <span className="bar-value">{formatDuration(x.seconds)}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </>
+              )}
+            </>
           )}
         </section>
 
