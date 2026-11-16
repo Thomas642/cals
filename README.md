@@ -104,6 +104,18 @@ Lecteur maison, identique sur tous les navigateurs :
 - **Aperçu au survol** : en passant la souris sur une miniature d'épisode, les images de l'épisode défilent
   (planche d'aperçus du lecteur).
 
+### Accueil et décor
+
+- **Carrousel** : jusqu'à 5 séries mises en avant (en cours, puis avec des nouveautés, puis les plus récentes),
+  chacune à sa couleur d'ambiance. Défilement toutes les 8 s, en pause au survol, au focus clavier et quand
+  l'onglet est caché ; flèches, points et balayage sur téléphone ; pas de défilement automatique si le système
+  demande moins d'animations.
+- **Décor de saison** : pétales de cerisier du 20 mars au 31 mai, feuilles d'automne en octobre et novembre, neige
+  du 1er décembre au 6 janvier. Couche transparente qui n'intercepte aucun clic, absente pendant la lecture d'un
+  épisode et si le système demande moins d'animations. Chacun peut le couper dans le menu du compte (« Décor de
+  saison », réglage enregistré par compte). Aperçu hors saison : ajouter `?decor=sakura`, `?decor=automne` ou
+  `?decor=neige` à l'adresse.
+
 ### Tableau de bord (administrateurs)
 
 Menu du compte > **Tableau de bord** (`/admin`), actualisé toutes les 10 secondes :
@@ -115,6 +127,9 @@ Menu du compte > **Tableau de bord** (`/admin`), actualisé toutes les 10 second
 - **Chiffres clés** : séries, épisodes, durée totale, épisodes sous-titrés, comptes actifs cette semaine.
 - **Stockage par série**, **conversions** en cours ou en échec, **activité récente** (qui regarde quoi), **envois
   incomplets**, **épisodes sans sous-titres**.
+- **Nettoyage** : suppression d'un envoi incomplet, ou de tous ceux de plus de 24 h en un clic
+  (`DELETE /api/admin/incomplete?older_than_hours=24`). `update.sh` vide aussi le cache de construction Docker
+  après chaque mise à jour.
 - **Serveur** : mémoire vive, charge, durée depuis le démarrage, disponibilité de ffmpeg. Le conteneur lit ces valeurs
   dans le noyau partagé : elles concernent tout le VPS.
 

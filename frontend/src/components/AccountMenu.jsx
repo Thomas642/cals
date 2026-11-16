@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { setManage, useManage } from '../manage.js';
+import { updateSettings, useSettings } from '../settings.js';
+import { SEASON_LABEL, currentSeason } from './Seasonal.jsx';
 import Icon from './Icon.jsx';
 import { hueOf } from '../files.js';
 
@@ -11,6 +13,8 @@ export default function AccountMenu({ user, onLogout }) {
   const ref = useRef(null);
   const name = user.display_name || user.username;
   const isAdmin = user.role === 'admin';
+  const settings = useSettings();
+  const season = currentSeason();
 
   useEffect(() => {
     if (!open) return undefined;
@@ -49,6 +53,11 @@ export default function AccountMenu({ user, onLogout }) {
               </Link>
             </>
           )}
+          <button role="menuitemcheckbox" aria-checked={settings.seasonal !== false} className="menu-item" onClick={() => updateSettings({ seasonal: settings.seasonal === false })}>
+            <Icon name="sparkle" size={17} />
+            <span>Décor de saison<small className="menu-sub">{season ? `En ce moment : ${SEASON_LABEL[season]}` : 'Hors saison en ce moment'}</small></span>
+            <span className={`switch${settings.seasonal !== false ? ' on' : ''}`} aria-hidden="true" />
+          </button>
           <Link role="menuitem" className="menu-item" to="/compte" onClick={() => setOpen(false)}>
             <Icon name="lock" size={17} /> <span>Mon mot de passe</span>
           </Link>

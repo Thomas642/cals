@@ -302,7 +302,7 @@ test('lecteur et bibliotheque : reglages, generique, saisons, ordre, deplacement
   // Reglages par compte
   assert.equal((await call('PUT', '/me/settings', { subtitles: { size: 'xxl' } })).status, 400);
   const st = (await call('PUT', '/me/settings', { autoplay: false, subtitles: { size: 'l', bg: 0.85, position: 'top' } })).body;
-  assert.deepEqual(st, { autoplay: false, subtitles: { size: 'l', bg: 0.85, position: 'top' } });
+  assert.deepEqual(st, { autoplay: false, seasonal: true, subtitles: { size: 'l', bg: 0.85, position: 'top' } });
   assert.deepEqual((await call('GET', '/auth/status')).body.user.settings, st);
 
   // Generique : serie par defaut, episode qui le remplace
@@ -362,4 +362,21 @@ test('lecteur et bibliotheque : reglages, generique, saisons, ordre, deplacement
   const top = stats.top_episodes.find((x) => x.id === a);
   assert.deepEqual({ viewers: top.viewers, completions: top.completions, seconds: top.seconds }, { viewers: 1, completions: 1, seconds: 150 });
   assert.equal(stats.by_series.find((x) => x.id === s.id).seconds, 150);
+});
+
+test('nettoyage des envois incomplets anciens et reglage du decor de saison', async () => {
+  const s = (await call('POST', '/series', { title: 'Nettoyage' })).body;
+  const old = (await call('POST', `/series/${s.id}/episodes`, { filename: 'vieux.mp4', size: 10, number: 1 })).body;
+  await call('PUT', `/episodes/${old.id}/upload?offset=0`, undefined, { raw: Buffer.from('abcd'), headers: { 'Content-Type': 'application/octet-stream' } });
+  const recent = (await call('POST', `/series/${s.id}/episodes`, { filename: 'recent.mp4', size: 10, number: 2 })).body;
+  db.prepare("UPDATE episode SET created_at = datetime('now', '-3 days') WHERE id = ?").run(old.id);
+
+  assert.equal((await call('DELETE', '/admin/incomplete?older_than_hours=-1')).status, 400);
+  const r = await call('DELETE', '/admin/incomplete?older_than_hours=24');
+  assert.deepEqual(r.body, { deleted: 1, freed_bytes: 4 });
+  assert.equal((await call('GET', `/episodes/${old.id}`)).status, 404);
+  assert.equal((await call('GET', `/episodes/${recent.id}`)).status, 200);
+
+  assert.equal((await call('GET', '/auth/status')).body.user.settings.seasonal, true);
+  assert.equal((await call('PUT', '/me/settings', { seasonal: false })).body.seasonal, false);
 });
