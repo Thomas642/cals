@@ -57,6 +57,24 @@ sur la vidéo est désactivé et la vidéo est servie en `Content-Disposition: i
 d'enregistrer une vidéo ; cela n'empêche pas une personne qui s'y connaît de récupérer le flux (aucun site sans DRM
 ne le peut). Seules les personnes à qui tu crées un compte ont accès au site.
 
+### Lecteur
+
+Lecteur maison, identique sur tous les navigateurs :
+
+- **Passer l'intro** : bouton affiché pendant le générique d'ouverture. Réglage en mode gestion, sous le lecteur :
+  « Début ici » / « Fin ici » à la position courante, pour toute la série ou seulement pour un épisode (qui
+  remplace alors le réglage de la série). La zone du générique est marquée sur la barre de temps.
+- **Épisode suivant automatique** : compte à rebours de 10 s à la fin, annulable ; désactivable dans le menu
+  des sous-titres (réglage du compte).
+- **Raccourcis clavier** : Espace/K lecture-pause, ←/→ (J/L) ±10 s, ↑/↓ volume, F plein écran, M son, S sous-titres,
+  I passer l'intro, N épisode suivant.
+- **Sous-titres affichés par le site** : taille (4 niveaux), fond (aucun à opaque), position (bas ou haut),
+  enregistrés par compte sur le serveur (`PUT /api/me/settings`).
+- **Aperçu sur la barre de temps** : planche de 10 à 150 images générée par ffmpeg après chaque envoi (et au
+  démarrage pour les épisodes existants).
+- Pas de bouton de téléchargement ni de menu « Enregistrer la vidéo » ; le temps réellement regardé est compté
+  pour les statistiques.
+
 ### Tableau de bord (administrateurs)
 
 Menu du compte > **Tableau de bord** (`/admin`), actualisé toutes les 10 secondes :
@@ -267,6 +285,12 @@ lectures (GET, sauf `/api/users` et `/api/storage`), à sa progression et à son
 | GET | /api/admin/overview | Données du tableau de bord (administrateurs) |
 | GET / POST | /api/users | Comptes (administrateurs) : liste / création `{ username, password, role, display_name }` |
 | PUT / DELETE | /api/users/:id | Nom, rôle, mot de passe, désactivation / suppression |
+| PUT | /api/me/settings | Réglages du lecteur `{ autoplay, subtitles: { size, bg, position } }` |
+| PUT | /api/series/:id/intro, /api/episodes/:id/intro | Générique `{ start, end }` en secondes (`null` pour effacer) |
+| PUT | /api/series/:id/order | Ordre manuel des épisodes `{ episodes: [ids] }` |
+| PUT / DELETE | /api/watchlist/:seriesId | Ma liste |
+| GET | /api/recent | Épisodes récemment ajoutés (avec `is_new` pour le compte) |
+| GET | /api/media/storyboard/:id | Planche d'aperçus |
 | PUT | /api/me/password | Changer son mot de passe `{ current, password }` |
 | GET | /api/progress | Progression de lecture du compte connecté |
 | PUT / DELETE | /api/progress/:episodeId | Position `{ pos, dur, watched? }` / remise à zéro |

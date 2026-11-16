@@ -33,6 +33,11 @@ function imageType(buf) {
 }
 const IMAGE_MIME = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
 
+// Reglages du lecteur par compte.
+export const DEFAULT_SETTINGS = { autoplay: true, subtitles: { size: 'm', bg: 0.6, position: 'bottom' } };
+const SUB_SIZES = ['s', 'm', 'l', 'xl'];
+const SUB_BG = [0, 0.3, 0.6, 0.85];
+
 const httpError = (status, message, extra) => Object.assign(new Error(message), { status, extra });
 const notFound = (what) => httpError(404, `${what} introuvable`);
 
@@ -52,6 +57,13 @@ function text(value, { field, max, required = false }) {
   if (required && !v) throw httpError(400, `${field} obligatoire`);
   if (v.length > max) throw httpError(400, `${field} trop long (${max} caracteres maximum)`);
   return v || null;
+}
+
+function seasonNumber(value) {
+  if (value === undefined || value === null || value === '') return 1;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0 || n > 999) throw httpError(400, 'Numéro de saison invalide');
+  return n;
 }
 
 function episodeNumber(value) {
@@ -88,10 +100,22 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
   const getEpisode = (eid) => db.prepare('SELECT * FROM episode WHERE id = ?').get(eid);
   const subtitlesOf = (eid) => db.prepare('SELECT id, label, lang, original_name, created_at FROM subtitle WHERE episode_id = ? ORDER BY id').all(eid);
 
-  function episodeView(e) {
+  const version = (file) => path.basename(file, path.extname(file)).slice(0, 8);
+  // Generique : reglage propre a l'episode, sinon celui de la serie.
+  function introOf(e, s = getSeries(e.series_id)) {
+    if (e.intro_start !== null && e.intro_end !== null) return { start: e.intro_start, end: e.intro_end, scope: 'episode' };
+    if (s && s.intro_start !== null && s.intro_end !== null) return { start: s.intro_start, end: s.intro_end, scope: 'series' };
+    return null;
+  }
+
+  function episodeView(e, { user, series } = {}) {
     const received = e.status === 'ready' ? e.video_size : fileSize(`${abs(e.video_file)}.part`);
     return {
       id: e.id, series_id: e.series_id, number: e.number, title: e.title, original_name: e.original_name,
+      season: e.season || 1, position: e.position, ready_at: e.ready_at,
+      is_new: !!(user?.prev_visit_at && e.ready_at && e.ready_at > user.prev_visit_at),
+      intro: introOf(e, series),
+      storyboard: e.storyboard_file && e.storyboard ? { ...JSON.parse(e.storyboard), url: `/api/media/storyboard/${e.id}?v=${version(e.storyboard_file)}` } : null,
       video_mime: e.video_mime, video_size: e.video_size, status: e.status, received, created_at: e.created_at,
       processing: e.processing,
       processing_progress: processor.progressOf(e.id) ?? e.processing_progress,
@@ -104,7 +128,9 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     };
   }
 
-  const episodesOf = (sid) => db.prepare('SELECT * FROM episode WHERE series_id = ? ORDER BY number IS NULL, number, id').all(sid);
+  // Ordre : saison, puis ordre manuel (glisser-deposer), puis numero.
+  const EPISODE_ORDER = 'season, position IS NULL, position, number IS NULL, number, id';
+  const episodesOf = (sid) => db.prepare(`SELECT * FROM episode WHERE series_id = ? ORDER BY ${EPISODE_ORDER}`).all(sid);
 
   // Affiche de la serie : image importee, sinon miniature du premier episode qui en a une.
   function coverUrl(s) {
@@ -112,7 +138,12 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     const e = db.prepare('SELECT id, thumb_file FROM episode WHERE series_id = ? AND thumb_file IS NOT NULL ORDER BY number IS NULL, number, id LIMIT 1').get(s.id);
     return e ? `/api/media/thumb/${e.id}?v=${path.basename(e.thumb_file, path.extname(e.thumb_file)).slice(0, 8)}` : null;
   }
-  const seriesView = (s) => ({ ...s, cover_file: undefined, has_custom_cover: !!s.cover_file, cover_url: coverUrl(s) });
+  const seriesView = (s) => ({
+    ...s, cover_file: undefined, has_custom_cover: !!s.cover_file, cover_url: coverUrl(s),
+    genres: s.genres ? JSON.parse(s.genres) : [], season_names: s.season_names ? JSON.parse(s.season_names) : {},
+    intro: s.intro_start !== null && s.intro_end !== null ? { start: s.intro_start, end: s.intro_end } : null,
+    intro_start: undefined, intro_end: undefined,
+  });
 
   /** Lit un corps binaire (image) avec une taille maximale. */
   async function readBody(req, max) {
@@ -138,6 +169,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
 
   function deleteEpisodeFiles(e) {
     removeFile(e.thumb_file);
+    removeFile(e.storyboard_file);
     removeFile(e.video_file);
     removeFile(e.video_file && `${e.video_file}.part`);
     for (const s of db.prepare('SELECT file FROM subtitle WHERE episode_id = ?').all(e.id)) removeFile(s.file);
@@ -152,7 +184,21 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
   r.get('/health', (req, res) => res.json({ ok: true }));
 
   // ---------- Authentification (routes publiques) ----------
-  r.get('/auth/status', (req, res) => res.json(auth.status(req)));
+  r.get('/auth/status', (req, res) => {
+    const st = auth.status(req);
+    if (st.user) {
+      // Nouvelle visite apres 30 min d'absence : la precedente sert de repere pour les badges « Nouveau ».
+      const u = db.prepare('SELECT last_visit_at, settings FROM app_user WHERE id = ?').get(st.user.id);
+      const stale = !u.last_visit_at || db.prepare("SELECT ? < datetime('now', '-30 minutes') AS old").get(u.last_visit_at).old;
+      if (stale) {
+        db.prepare("UPDATE app_user SET prev_visit_at = COALESCE(last_visit_at, datetime('now')), last_visit_at = datetime('now') WHERE id = ?").run(st.user.id);
+      } else {
+        db.prepare("UPDATE app_user SET last_visit_at = datetime('now') WHERE id = ?").run(st.user.id);
+      }
+      st.user.settings = { ...DEFAULT_SETTINGS, ...(u.settings ? JSON.parse(u.settings) : {}) };
+    }
+    res.json(st);
+  });
   r.post('/auth/login', (req, res) => res.json(auth.login(req, res, {
     username: req.body?.username, password: req.body?.password, remember: req.body?.remember !== false,
   })));
@@ -165,14 +211,14 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
   r.use((req, res, next) => {
     if (req.user.role === 'admin') return next();
     if (req.method === 'GET' && !/^\/(storage|users|admin)(\/|$)/.test(req.path)) return next();
-    if (/^\/progress\/\d+$/.test(req.path) && ['PUT', 'DELETE'].includes(req.method)) return next();
-    if (req.path === '/me/password' && req.method === 'PUT') return next();
+    if (/^\/(progress|watchlist)\/\d+$/.test(req.path) && ['PUT', 'DELETE'].includes(req.method)) return next();
+    if (['/me/password', '/me/settings'].includes(req.path) && req.method === 'PUT') return next();
     return auth.requireAdmin(req, res, next);
   });
   const isAdmin = (req) => req.user.role === 'admin';
   // Ce qu'un spectateur voit d'un episode : pas de details techniques ni de nom de fichier.
-  const viewFor = (req, e) => {
-    const v = episodeView(e);
+  const viewFor = (req, e, series) => {
+    const v = episodeView(e, { user: req.user, series });
     if (isAdmin(req)) return v;
     const { original_name: _o, media: _m, processing_error: _p, received: _r, ...rest } = v;
     return rest;
@@ -185,6 +231,40 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     validatePassword(password);
     db.prepare("UPDATE app_user SET password_hash = ?, updated_at = datetime('now') WHERE id = ?").run(hashPassword(password), req.user.id);
     res.status(204).end();
+  });
+
+  r.put('/me/settings', (req, res) => {
+    const b = req.body || {};
+    const cur = { ...DEFAULT_SETTINGS, ...(req.user.settings ? JSON.parse(req.user.settings) : {}) };
+    const next = { ...cur, subtitles: { ...DEFAULT_SETTINGS.subtitles, ...cur.subtitles } };
+    if ('autoplay' in b) next.autoplay = !!b.autoplay;
+    if (b.subtitles) {
+      const sub = b.subtitles;
+      if ('size' in sub) { if (!SUB_SIZES.includes(sub.size)) throw httpError(400, 'Taille de sous-titres invalide'); next.subtitles.size = sub.size; }
+      if ('bg' in sub) { if (!SUB_BG.includes(Number(sub.bg))) throw httpError(400, 'Fond de sous-titres invalide'); next.subtitles.bg = Number(sub.bg); }
+      if ('position' in sub) { if (!['bottom', 'top'].includes(sub.position)) throw httpError(400, 'Position invalide'); next.subtitles.position = sub.position; }
+    }
+    db.prepare('UPDATE app_user SET settings = ? WHERE id = ?').run(JSON.stringify(next), req.user.id);
+    res.json(next);
+  });
+
+  // ---------- Ma liste ----------
+  r.put('/watchlist/:id', (req, res) => {
+    const s = getSeries(id(req.params.id));
+    if (!s) throw notFound('Serie');
+    db.prepare('INSERT OR IGNORE INTO watchlist (user_id, series_id) VALUES (?, ?)').run(req.user.id, s.id);
+    res.status(204).end();
+  });
+  r.delete('/watchlist/:id', (req, res) => {
+    db.prepare('DELETE FROM watchlist WHERE user_id = ? AND series_id = ?').run(req.user.id, id(req.params.id));
+    res.status(204).end();
+  });
+
+  // ---------- Recemment ajoutes ----------
+  r.get('/recent', (req, res) => {
+    const rows = db.prepare(`SELECT e.*, s.title AS series_title FROM episode e JOIN series s ON s.id = e.series_id
+      WHERE e.status = 'ready' ORDER BY e.ready_at DESC, e.id DESC LIMIT 16`).all();
+    res.json(rows.map((e) => ({ ...viewFor(req, e), series_title: e.series_title })));
   });
 
   // ---------- Progression de lecture (par compte) ----------
@@ -207,10 +287,15 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     if (!Number.isFinite(pos) || pos < 0 || !Number.isFinite(dur) || dur < 0 || dur > 86400) throw httpError(400, 'Position invalide');
     // Vu : plus de 95 % regardes, ou moins de 90 s restantes sur un episode de plus de 10 min (generique de fin).
     const watched = req.body?.watched === true || (dur > 0 && (pos / dur > 0.95 || (dur > 600 && dur - pos < 90)));
+    // Temps reellement regarde depuis le dernier envoi (statistiques), borne pour eviter les valeurs aberrantes.
+    const delta = Math.max(0, Math.min(120, Number(req.body?.delta) || 0));
     const prev = db.prepare('SELECT watched FROM watch_progress WHERE user_id = ? AND episode_id = ?').get(req.user.id, e.id);
-    db.prepare(`INSERT INTO watch_progress (user_id, episode_id, pos, dur, watched, updated_at) VALUES (?, ?, ?, ?, ?, datetime('now'))
-      ON CONFLICT(user_id, episode_id) DO UPDATE SET pos = excluded.pos, dur = excluded.dur, watched = excluded.watched, updated_at = excluded.updated_at`)
-      .run(req.user.id, e.id, watched ? 0 : Math.floor(pos), Math.floor(dur), watched || prev?.watched ? 1 : 0);
+    const finishedNow = watched && req.body?.manual !== true && !(prev?.watched && pos === 0);
+    db.prepare(`INSERT INTO watch_progress (user_id, episode_id, pos, dur, watched, seconds_watched, completions, updated_at)
+      VALUES (@u, @e, @pos, @dur, @w, @delta, @done, datetime('now'))
+      ON CONFLICT(user_id, episode_id) DO UPDATE SET pos = excluded.pos, dur = excluded.dur, watched = excluded.watched,
+        seconds_watched = seconds_watched + excluded.seconds_watched, completions = completions + excluded.completions, updated_at = excluded.updated_at`)
+      .run({ u: req.user.id, e: e.id, pos: watched ? 0 : Math.floor(pos), dur: Math.floor(dur), w: watched || prev?.watched ? 1 : 0, delta, done: finishedNow && !prev?.watched ? 1 : 0 });
     res.status(204).end();
   });
 
@@ -372,8 +457,12 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
   r.get('/series', (req, res) => {
     res.json(db.prepare(`SELECT s.*,
         (SELECT COUNT(*) FROM episode e WHERE e.series_id = s.id AND e.status = 'ready') AS episode_count,
-        (SELECT COUNT(DISTINCT e.id) FROM episode e JOIN subtitle t ON t.episode_id = e.id WHERE e.series_id = s.id) AS subtitled_count
-      FROM series s ORDER BY s.title COLLATE NOCASE`).all().map(seriesView));
+        (SELECT COUNT(DISTINCT e.id) FROM episode e JOIN subtitle t ON t.episode_id = e.id WHERE e.series_id = s.id) AS subtitled_count,
+        (SELECT COUNT(*) FROM episode e WHERE e.series_id = s.id AND e.status = 'ready' AND @prev IS NOT NULL AND e.ready_at > @prev) AS new_count,
+        EXISTS (SELECT 1 FROM watchlist w WHERE w.series_id = s.id AND w.user_id = @uid) AS in_list,
+        (SELECT MAX(e.ready_at) FROM episode e WHERE e.series_id = s.id AND e.status = 'ready') AS last_added
+      FROM series s ORDER BY s.title COLLATE NOCASE`).all({ prev: req.user.prev_visit_at, uid: req.user.id })
+      .map((x) => ({ ...seriesView(x), in_list: !!x.in_list })));
   });
 
   r.post('/series', (req, res) => {
@@ -387,7 +476,8 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     const s = getSeries(id(req.params.id));
     if (!s) throw notFound('Serie');
     const eps = episodesOf(s.id).filter((e) => isAdmin(req) || e.status === 'ready');
-    res.json({ ...seriesView(s), episodes: eps.map((e) => viewFor(req, e)) });
+    const inList = !!db.prepare('SELECT 1 FROM watchlist WHERE user_id = ? AND series_id = ?').get(req.user.id, s.id);
+    res.json({ ...seriesView(s), in_list: inList, episodes: eps.map((e) => viewFor(req, e, s)) });
   });
 
   r.put('/series/:id', (req, res) => {
@@ -396,7 +486,54 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     const title = text(req.body?.title, { field: 'Titre', max: 200, required: true });
     const description = text(req.body?.description, { field: 'Description', max: 4000 });
     db.prepare('UPDATE series SET title = ?, description = ? WHERE id = ?').run(title, description, sid);
+    if (req.body?.season_names !== undefined) {
+      const names = {};
+      for (const [k, v] of Object.entries(req.body.season_names || {})) {
+        const n = Number(k);
+        const t = text(v, { field: 'Nom de saison', max: 80 });
+        if (Number.isInteger(n) && n >= 0 && n <= 999 && t) names[n] = t;
+      }
+      db.prepare('UPDATE series SET season_names = ? WHERE id = ?').run(JSON.stringify(names), sid);
+    }
     res.json(seriesView(getSeries(sid)));
+  });
+
+  // Generique d'ouverture : bornes en secondes ; null pour effacer.
+  function introBody(b) {
+    if (b?.start === null || b?.end === null) return { start: null, end: null };
+    const start = Number(b?.start);
+    const end = Number(b?.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start || end > 86400) {
+      throw httpError(400, 'Bornes du générique invalides (la fin doit être après le début)');
+    }
+    return { start: Math.round(start * 10) / 10, end: Math.round(end * 10) / 10 };
+  }
+  r.put('/series/:id/intro', (req, res) => {
+    const s = getSeries(id(req.params.id));
+    if (!s) throw notFound('Serie');
+    const { start, end } = introBody(req.body);
+    db.prepare('UPDATE series SET intro_start = ?, intro_end = ? WHERE id = ?').run(start, end, s.id);
+    res.json(seriesView(getSeries(s.id)));
+  });
+  r.put('/episodes/:id/intro', (req, res) => {
+    const e = getEpisode(id(req.params.id));
+    if (!e) throw notFound('Episode');
+    const { start, end } = introBody(req.body);
+    db.prepare('UPDATE episode SET intro_start = ?, intro_end = ? WHERE id = ?').run(start, end, e.id);
+    res.json(episodeView(getEpisode(e.id)));
+  });
+
+  // Ordre manuel des episodes (glisser-deposer) : liste d'identifiants dans l'ordre voulu.
+  r.put('/series/:id/order', (req, res) => {
+    const s = getSeries(id(req.params.id));
+    if (!s) throw notFound('Serie');
+    const ids = Array.isArray(req.body?.episodes) ? req.body.episodes.map(id) : null;
+    if (!ids) throw httpError(400, 'Liste d\'épisodes manquante');
+    const own = new Set(episodesOf(s.id).map((e) => e.id));
+    if (ids.some((x) => !own.has(x))) throw httpError(400, 'Un épisode n\'appartient pas à cette série');
+    const upd = db.prepare('UPDATE episode SET position = ? WHERE id = ?');
+    db.transaction(() => ids.forEach((x, i) => upd.run(i, x)))();
+    res.json({ ...seriesView(getSeries(s.id)), episodes: episodesOf(s.id).map((e) => viewFor(req, e, s)) });
   });
 
   // Affiche importee (corps brut : image JPEG, PNG ou WebP).
@@ -446,10 +583,11 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
       throw httpError(507, `Espace disque insuffisant sur le serveur (${(free / 1024 ** 3).toFixed(1)} Go libres)`);
     }
     const number = episodeNumber(req.body?.number);
+    const season = seasonNumber(req.body?.season);
     const title = text(req.body?.title, { field: 'Titre', max: 300 });
     const file = `videos/${crypto.randomUUID()}.${ext}`;
-    const info = db.prepare(`INSERT INTO episode (series_id, number, title, original_name, video_file, video_mime, video_size)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(sid, number, title, filename, file, VIDEO_TYPES[ext], size);
+    const info = db.prepare(`INSERT INTO episode (series_id, season, number, title, original_name, video_file, video_mime, video_size)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(sid, season, number, title, filename, file, VIDEO_TYPES[ext], size);
     res.status(201).json(episodeView(getEpisode(info.lastInsertRowid)));
   });
 
@@ -460,19 +598,32 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     const ready = episodesOf(e.series_id).filter((x) => x.status === 'ready');
     const i = ready.findIndex((x) => x.id === e.id);
     res.json({
-      ...viewFor(req, e),
-      series: { id: s.id, title: s.title, cover_url: coverUrl(s) },
+      ...viewFor(req, e, s),
+      series: { id: s.id, title: s.title, cover_url: coverUrl(s), accent: s.accent, season_names: s.season_names ? JSON.parse(s.season_names) : {} },
       prev_id: i > 0 ? ready[i - 1].id : null,
       next_id: i >= 0 && i < ready.length - 1 ? ready[i + 1].id : null,
     });
   });
 
+  // Numero, titre, saison ; series_id deplace l'episode vers une autre serie (en fin de liste).
   r.put('/episodes/:id', (req, res) => {
-    const eid = id(req.params.id);
-    if (!getEpisode(eid)) throw notFound('Episode');
-    db.prepare('UPDATE episode SET number = ?, title = ? WHERE id = ?')
-      .run(episodeNumber(req.body?.number), text(req.body?.title, { field: 'Titre', max: 300 }), eid);
-    res.json(episodeView(getEpisode(eid)));
+    const e = getEpisode(id(req.params.id));
+    if (!e) throw notFound('Episode');
+    const b = req.body || {};
+    const number = 'number' in b ? episodeNumber(b.number) : e.number;
+    const title = 'title' in b ? text(b.title, { field: 'Titre', max: 300 }) : e.title;
+    const season = 'season' in b ? seasonNumber(b.season) : e.season;
+    let seriesId = e.series_id;
+    let position = e.position;
+    if (b.series_id !== undefined && Number(b.series_id) !== e.series_id) {
+      seriesId = id(b.series_id);
+      if (!getSeries(seriesId)) throw notFound('Serie de destination');
+      position = null;
+    }
+    if (season !== e.season) position = null;
+    db.prepare('UPDATE episode SET number = ?, title = ?, season = ?, series_id = ?, position = ? WHERE id = ?')
+      .run(number, title, season, seriesId, position, e.id);
+    res.json(episodeView(getEpisode(e.id)));
   });
 
   r.delete('/episodes/:id', (req, res) => {
@@ -530,7 +681,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     const now = fileSize(part);
     if (now === e.video_size) {
       fs.renameSync(part, abs(e.video_file));
-      db.prepare("UPDATE episode SET status = 'ready' WHERE id = ?").run(e.id);
+      db.prepare("UPDATE episode SET status = 'ready', ready_at = datetime('now') WHERE id = ?").run(e.id);
       processor.enqueue(e.id);
     }
     res.json({ received: now, status: now === e.video_size ? 'ready' : 'uploading' });
@@ -603,6 +754,12 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
       if (err && !res.headersSent) next(err);
     });
   }
+
+  r.get('/media/storyboard/:id', (req, res, next) => {
+    const e = getEpisode(id(req.params.id));
+    if (!e?.storyboard_file) throw notFound('Planche');
+    sendImage(res, next, e.storyboard_file);
+  });
 
   r.get('/media/thumb/:id', (req, res, next) => {
     const e = getEpisode(id(req.params.id));

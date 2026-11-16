@@ -64,6 +64,18 @@ test('traitement complet : conversion, miniature, sous-titres integres extraits'
     assert.equal(ep.video_mime, 'video/mp4');
     assert.equal(ep.media.converted, 'transcode');
     assert.ok(ep.thumb_url);
+    // Planche d'apercus : 10 images minimum pour une video de 3 s, en grille de 10 colonnes.
+    assert.equal(ep.storyboard.count, 10);
+    assert.equal(ep.storyboard.cols, 10);
+    assert.equal(ep.storyboard.w, 160);
+    assert.equal(ep.storyboard.h, 90);
+    const sb = await fetch(`${base}${ep.storyboard.url.replace(/^\/api/, '')}`, { headers: { Cookie: cookie } });
+    assert.match(sb.headers.get('content-type'), /^image\/jpeg/);
+    const sbFile = path.join(tmp, 'sb.jpg');
+    const sbBuf = Buffer.from(await sb.arrayBuffer());
+    fs.writeFileSync(sbFile, sbBuf);
+    const dims = execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'v', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', sbFile]).toString().trim();
+    assert.equal(dims, '1600,90');
     assert.equal(ep.subtitles.length, 1);
     assert.equal(ep.subtitles[0].lang, 'fr');
     assert.equal(ep.subtitles[0].label, 'Français (intégré)');

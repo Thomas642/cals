@@ -197,7 +197,9 @@ test('comptes : creation par un admin, spectateur en lecture seule, progression 
   cookie = '';
   const login = await call('POST', '/auth/login', { username: 'lea', password: 'motdepasse2' });
   assert.equal(login.status, 200);
-  assert.deepEqual((await call('GET', '/auth/status')).body.user, { id: created.body.id, username: 'Lea', display_name: 'Léa', role: 'viewer' });
+  const { settings, ...who } = (await call('GET', '/auth/status')).body.user;
+  assert.deepEqual(who, { id: created.body.id, username: 'Lea', display_name: 'Léa', role: 'viewer' });
+  assert.equal(settings.autoplay, true);
   const detail = (await call('GET', `/series/${s.id}`)).body;
   assert.deepEqual(detail.episodes.map((x) => x.id), [e.id]); // episode non termine cache
   assert.equal(detail.episodes[0].original_name, undefined);
@@ -265,7 +267,9 @@ test('tableau de bord : reserve aux administrateurs, chiffres coherents', async 
   const half = (await call('POST', `/series/${s.id}/episodes`, { filename: 'moitie.mp4', size: 10, number: 2 })).body;
   await call('PUT', `/episodes/${half.id}/upload?offset=0`, undefined, { raw: Buffer.from('abc'), headers: { 'Content-Type': 'application/octet-stream' } });
 
-  const o = (await call('GET', '/admin/overview')).body;
+  const ov = await call('GET', '/admin/overview');
+  assert.equal(ov.status, 200, JSON.stringify(ov.body));
+  const o = ov.body;
   assert.ok(o.disk.total > 0 && o.disk.free > 0 && o.disk.free <= o.disk.total);
   assert.ok(o.media.videos >= 4);
   const row = o.library.by_series.find((x) => x.id === s.id);
@@ -283,4 +287,70 @@ test('tableau de bord : reserve aux administrateurs, chiffres coherents', async 
   await call('POST', '/auth/login', { username: 'spectateur2', password: 'motdepasse3' });
   assert.equal((await call('GET', '/admin/overview')).status, 403);
   cookie = adminCookie;
+});
+
+test('lecteur et bibliotheque : reglages, generique, saisons, ordre, deplacement, ma liste, nouveautes, statistiques', async () => {
+  const s = (await call('POST', '/series', { title: 'Saisons' })).body;
+  const other = (await call('POST', '/series', { title: 'Autre serie' })).body;
+  const mk = async (n, season) => {
+    const e = (await call('POST', `/series/${s.id}/episodes`, { filename: `s${season}e${n}.mp4`, size: 1, number: n, season })).body;
+    await call('PUT', `/episodes/${e.id}/upload?offset=0`, undefined, { raw: Buffer.from('x'), headers: { 'Content-Type': 'application/octet-stream' } });
+    return e.id;
+  };
+  const a = await mk(1, 1); const b = await mk(2, 1); const c = await mk(1, 2);
+
+  // Reglages par compte
+  assert.equal((await call('PUT', '/me/settings', { subtitles: { size: 'xxl' } })).status, 400);
+  const st = (await call('PUT', '/me/settings', { autoplay: false, subtitles: { size: 'l', bg: 0.85, position: 'top' } })).body;
+  assert.deepEqual(st, { autoplay: false, subtitles: { size: 'l', bg: 0.85, position: 'top' } });
+  assert.deepEqual((await call('GET', '/auth/status')).body.user.settings, st);
+
+  // Generique : serie par defaut, episode qui le remplace
+  assert.equal((await call('PUT', `/series/${s.id}/intro`, { start: 90, end: 80 })).status, 400);
+  await call('PUT', `/series/${s.id}/intro`, { start: 60, end: 150 });
+  assert.deepEqual((await call('GET', `/episodes/${a}`)).body.intro, { start: 60, end: 150, scope: 'series' });
+  await call('PUT', `/episodes/${a}/intro`, { start: 10, end: 99.94 });
+  assert.deepEqual((await call('GET', `/episodes/${a}`)).body.intro, { start: 10, end: 99.9, scope: 'episode' });
+  await call('PUT', `/episodes/${a}/intro`, { start: null, end: null });
+  assert.equal((await call('GET', `/episodes/${a}`)).body.intro.scope, 'series');
+
+  // Saisons et ordre manuel
+  let eps = (await call('GET', `/series/${s.id}`)).body.episodes;
+  assert.deepEqual(eps.map((e) => [e.season, e.number]), [[1, 1], [1, 2], [2, 1]]);
+  assert.equal((await call('PUT', `/series/${s.id}/order`, { episodes: [b, a, 99999] })).status, 400);
+  eps = (await call('PUT', `/series/${s.id}/order`, { episodes: [b, a, c] })).body.episodes;
+  assert.deepEqual(eps.map((e) => e.id), [b, a, c]);
+  assert.equal((await call('GET', `/episodes/${b}`)).body.next_id, a);
+  await call('PUT', `/series/${s.id}`, { title: 'Saisons', season_names: { 1: 'Arc 1 · Le début', 2: '' } });
+  assert.deepEqual((await call('GET', `/series/${s.id}`)).body.season_names, { 1: 'Arc 1 · Le début' });
+
+  // Deplacement vers une autre serie
+  await call('PUT', `/episodes/${c}`, { series_id: other.id, season: 1 });
+  assert.deepEqual((await call('GET', `/series/${other.id}`)).body.episodes.map((e) => e.id), [c]);
+
+  // Ma liste
+  await call('PUT', `/watchlist/${s.id}`);
+  assert.equal((await call('GET', '/series')).body.find((x) => x.id === s.id).in_list, true);
+  await call('DELETE', `/watchlist/${s.id}`);
+  assert.equal((await call('GET', '/series')).body.find((x) => x.id === s.id).in_list, false);
+
+  // Nouveautes : un episode mis en ligne apres la visite precedente est « nouveau »
+  db.prepare("UPDATE app_user SET prev_visit_at = datetime('now', '-1 day'), last_visit_at = datetime('now')").run();
+  db.prepare("UPDATE episode SET ready_at = datetime('now', '-2 days') WHERE id != ?").run(b);
+  const recent = (await call('GET', '/recent')).body;
+  assert.equal(recent[0].id, b);
+  assert.equal(recent[0].is_new, true);
+  assert.equal(recent.find((x) => x.id === a).is_new, false);
+  assert.equal((await call('GET', '/series')).body.find((x) => x.id === s.id).new_count, 1);
+
+  // Temps regarde et episode termine (statistiques)
+  await call('PUT', `/progress/${a}`, { pos: 100, dur: 1440, delta: 30 });
+  await call('PUT', `/progress/${a}`, { pos: 1420, dur: 1440, delta: 500 }); // delta borne a 120
+  const row = db.prepare('SELECT * FROM watch_progress WHERE episode_id = ?').get(a);
+  assert.equal(row.seconds_watched, 150);
+  assert.equal(row.completions, 1);
+  assert.equal(row.watched, 1);
+  // Vu a la main : compte comme vu, pas comme une lecture complete
+  await call('PUT', `/progress/${b}`, { pos: 0, dur: 0, watched: true, manual: true });
+  assert.equal(db.prepare('SELECT completions FROM watch_progress WHERE episode_id = ?').get(b).completions, 0);
 });

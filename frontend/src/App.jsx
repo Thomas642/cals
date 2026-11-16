@@ -3,6 +3,7 @@ import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api, onUnauthorized } from './api.js';
 import { clearProgress, loadProgress } from './progress.js';
 import { setManage } from './manage.js';
+import { initSettings } from './settings.js';
 import UploadTray from './components/UploadTray.jsx';
 import AccountMenu from './components/AccountMenu.jsx';
 import Logo from './components/Logo.jsx';
@@ -24,6 +25,7 @@ export default function App() {
       const status = await api.refresh('/auth/status');
       if (status.authenticated) {
         if (status.user.role !== 'admin') setManage(false);
+        initSettings(status.user.settings);
         await loadProgress();
       }
       setAuth(status);
@@ -95,7 +97,7 @@ function Shell({ user, onLogout }) {
         <Routes>
           <Route path="/" element={<Library user={user} />} />
           <Route path="/serie/:id" element={<Series user={user} />} />
-          <Route path="/regarder/:id" element={<Watch />} />
+          <Route path="/regarder/:id" element={<Watch user={user} />} />
           <Route path="/compte" element={<Account user={user} />} />
           {isAdmin && <Route path="/admin" element={<Dashboard />} />}
           {isAdmin && <Route path="/admin/comptes" element={<Admin me={user} />} />}

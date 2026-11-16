@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { convert, extractSubtitle, extractThumbnail, ffmpegAvailable, plan, probe } from './media.js';
+import { convert, extractStoryboard, extractSubtitle, extractThumbnail, ffmpegAvailable, plan, probe } from './media.js';
 
 const LANGS = { fre: 'fr', fra: 'fr', fr: 'fr', eng: 'en', en: 'en', jpn: 'ja', ja: 'ja' };
 const LABELS = { fr: 'Français', en: 'English', ja: '日本語' };
@@ -115,6 +115,19 @@ export function createProcessor(db, { mediaDir, enabled = process.env.VIDEO_PROC
       media = { ...media, converted: p.action, action: 'none' };
       set(id, { media_info: JSON.stringify({ ...prev, ...media }) });
     }
+    // Planche d'apercus, faite sur la video finale (apres conversion eventuelle).
+    const fin = get(id);
+    if (fin && !fin.storyboard_file && p.video) {
+      const finalPlan = p.action === 'none' ? p : plan(await probe(abs(fin.video_file)));
+      const sb = `images/${crypto.randomUUID()}.jpg`;
+      try {
+        const meta = await extractStoryboard(abs(fin.video_file), abs(sb), finalPlan);
+        if (get(id)) set(id, { storyboard_file: sb, storyboard: JSON.stringify(meta) }); else fs.rmSync(abs(sb), { force: true });
+      } catch (err) {
+        fs.rmSync(abs(sb), { force: true });
+        log.warn?.(`[traitement] planche d'apercus episode ${id} : ${err.message}`);
+      }
+    }
     set(id, { processing: 'done', processing_progress: 1 });
   }
 
@@ -150,8 +163,10 @@ export function createProcessor(db, { mediaDir, enabled = process.env.VIDEO_PROC
   function resume() {
     if (!enabled) return;
     db.prepare("SELECT id FROM episode WHERE status = 'ready' AND thumb_file IS NULL").all().forEach((r) => queueThumbnail(r.id));
+    // Episodes jamais traites, interrompus, ou traites avant l'ajout des planches d'apercus.
     const rows = db.prepare(`SELECT id FROM episode WHERE status = 'ready'
-      AND (processing IS NULL OR processing IN ('queued', 'running')) ORDER BY series_id, number, id`).all();
+      AND (processing IS NULL OR processing IN ('queued', 'running') OR (processing = 'done' AND storyboard_file IS NULL))
+      ORDER BY series_id, number, id`).all();
     rows.forEach((r) => enqueue(r.id));
   }
 

@@ -38,6 +38,14 @@ CREATE TABLE IF NOT EXISTS subtitle (
 CREATE INDEX IF NOT EXISTS idx_episode_series ON episode(series_id);
 CREATE INDEX IF NOT EXISTS idx_subtitle_episode ON subtitle(episode_id);
 
+-- Ma liste : series qu'une personne veut regarder.
+CREATE TABLE IF NOT EXISTS watchlist (
+  user_id   INTEGER NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  series_id INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
+  added_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, series_id)
+);
+
 -- Comptes : administrateur (gestion complete) ou spectateur (regarder seulement).
 CREATE TABLE IF NOT EXISTS app_user (
   id            INTEGER PRIMARY KEY,
