@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { useApi } from '../hooks.js';
 import { hueOf } from '../files.js';
@@ -26,6 +27,7 @@ export default function Admin({ me }) {
   return (
     <div className="admin">
       <header className="page-head">
+        <Link to="/admin" className="back"><Icon name="chevronLeft" size={18} /> Tableau de bord</Link>
         <span className="eyebrow">Administration</span>
         <h1>Comptes de la famille</h1>
         <p className="muted">

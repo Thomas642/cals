@@ -257,3 +257,30 @@ test('migration : l ancien identifiant unique devient administrateur et garde se
   assert.equal(migrated.prepare('SELECT user_id FROM auth_session').get().user_id, u.id);
   migrated.close();
 });
+
+test('tableau de bord : reserve aux administrateurs, chiffres coherents', async () => {
+  const s = (await call('POST', '/series', { title: 'Tableau' })).body;
+  const e = (await call('POST', `/series/${s.id}/episodes`, { filename: 't.mp4', size: 4, number: 1 })).body;
+  await call('PUT', `/episodes/${e.id}/upload?offset=0`, undefined, { raw: Buffer.from('abcd'), headers: { 'Content-Type': 'application/octet-stream' } });
+  const half = (await call('POST', `/series/${s.id}/episodes`, { filename: 'moitie.mp4', size: 10, number: 2 })).body;
+  await call('PUT', `/episodes/${half.id}/upload?offset=0`, undefined, { raw: Buffer.from('abc'), headers: { 'Content-Type': 'application/octet-stream' } });
+
+  const o = (await call('GET', '/admin/overview')).body;
+  assert.ok(o.disk.total > 0 && o.disk.free > 0 && o.disk.free <= o.disk.total);
+  assert.ok(o.media.videos >= 4);
+  const row = o.library.by_series.find((x) => x.id === s.id);
+  assert.deepEqual({ episodes: row.episodes, bytes: row.bytes }, { episodes: 1, bytes: 7 }); // 4 octets en ligne + 3 en cours
+  assert.ok(o.library.without_subtitles.some((x) => x.id === e.id));
+  const inc = o.incomplete.find((x) => x.id === half.id);
+  assert.deepEqual({ received: inc.received, size: inc.size, name: inc.original_name }, { received: 3, size: 10, name: 'moitie.mp4' });
+  assert.ok(o.server.cpus >= 1 && o.server.memory.total > 0);
+  assert.ok(o.users.total >= 1);
+
+  // Un spectateur n'y a pas acces.
+  const adminCookie = cookie;
+  await call('POST', '/users', { username: 'spectateur2', password: 'motdepasse3' });
+  cookie = '';
+  await call('POST', '/auth/login', { username: 'spectateur2', password: 'motdepasse3' });
+  assert.equal((await call('GET', '/admin/overview')).status, 403);
+  cookie = adminCookie;
+});

@@ -42,6 +42,9 @@ export default function AccountMenu({ user, onLogout }) {
                 <span className={`switch${manage ? ' on' : ''}`} aria-hidden="true" />
               </button>
               <Link role="menuitem" className="menu-item" to="/admin" onClick={() => setOpen(false)}>
+                <Icon name="gauge" size={17} /> <span>Tableau de bord</span>
+              </Link>
+              <Link role="menuitem" className="menu-item" to="/admin/comptes" onClick={() => setOpen(false)}>
                 <Icon name="users" size={17} /> <span>Comptes de la famille</span>
               </Link>
             </>

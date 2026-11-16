@@ -57,6 +57,20 @@ sur la vidéo est désactivé et la vidéo est servie en `Content-Disposition: i
 d'enregistrer une vidéo ; cela n'empêche pas une personne qui s'y connaît de récupérer le flux (aucun site sans DRM
 ne le peut). Seules les personnes à qui tu crées un compte ont accès au site.
 
+### Tableau de bord (administrateurs)
+
+Menu du compte > **Tableau de bord** (`/admin`), actualisé toutes les 10 secondes :
+
+- **Alertes** : espace libre sous 15 % (à surveiller) ou 5 % (critique), conversions en échec, envois incomplets,
+  ffmpeg absent.
+- **Disque** : espace libre, et répartition entre ce site, les autres fichiers du serveur et l'espace libre. Le disque
+  est celui du VPS, partagé avec les autres services. Détail du site : vidéos, miniatures, sous-titres, base.
+- **Chiffres clés** : séries, épisodes, durée totale, épisodes sous-titrés, comptes actifs cette semaine.
+- **Stockage par série**, **conversions** en cours ou en échec, **activité récente** (qui regarde quoi), **envois
+  incomplets**, **épisodes sans sous-titres**.
+- **Serveur** : mémoire vive, charge, durée depuis le démarrage, disponibilité de ffmpeg. Le conteneur lit ces valeurs
+  dans le noyau partagé : elles concernent tout le VPS.
+
 ### Import
 
 Les outils d'import et d'édition n'apparaissent qu'avec le **Mode gestion** (menu du compte, administrateurs
@@ -250,6 +264,7 @@ lectures (GET, sauf `/api/users` et `/api/storage`), à sa progression et à son
 |---|---|---|
 | GET | /api/health | État de l'API |
 | GET / POST | /api/auth/status, /api/auth/login, /api/auth/logout | Connexion |
+| GET | /api/admin/overview | Données du tableau de bord (administrateurs) |
 | GET / POST | /api/users | Comptes (administrateurs) : liste / création `{ username, password, role, display_name }` |
 | PUT / DELETE | /api/users/:id | Nom, rôle, mot de passe, désactivation / suppression |
 | PUT | /api/me/password | Changer son mot de passe `{ current, password }` |
