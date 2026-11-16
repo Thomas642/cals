@@ -197,7 +197,8 @@ test('comptes : creation par un admin, spectateur en lecture seule, progression 
   cookie = '';
   const login = await call('POST', '/auth/login', { username: 'lea', password: 'motdepasse2' });
   assert.equal(login.status, 200);
-  const { settings, ...who } = (await call('GET', '/auth/status')).body.user;
+  const { settings, avatar, is_profile: isProfile, account_id: accountId, ...who } = (await call('GET', '/auth/status')).body.user;
+  assert.deepEqual({ avatar, isProfile, accountId }, { avatar: null, isProfile: false, accountId: created.body.id });
   assert.deepEqual(who, { id: created.body.id, username: 'Lea', display_name: 'Léa', role: 'viewer' });
   assert.equal(settings.autoplay, true);
   const detail = (await call('GET', `/series/${s.id}`)).body;
@@ -379,4 +380,47 @@ test('nettoyage des envois incomplets anciens et reglage du decor de saison', as
 
   assert.equal((await call('GET', '/auth/status')).body.user.settings.seasonal, true);
   assert.equal((await call('PUT', '/me/settings', { seasonal: false })).body.seasonal, false);
+});
+
+test('profils « Qui regarde ? », avatars, historique, top 10', async () => {
+  const s = (await call('POST', '/series', { title: 'Profils' })).body;
+  const e = (await call('POST', `/series/${s.id}/episodes`, { filename: 'p.mp4', size: 1, number: 1 })).body;
+  await call('PUT', `/episodes/${e.id}/upload?offset=0`, undefined, { raw: Buffer.from('x'), headers: { 'Content-Type': 'application/octet-stream' } });
+  const me = (await call('GET', '/auth/status')).body.user;
+
+  // Avatar du profil principal
+  assert.equal((await call('PUT', `/me/profiles/${me.id}`, { avatar: { emoji: '💩', color: '#ff4f81' } })).status, 400);
+  assert.deepEqual((await call('PUT', `/me/profiles/${me.id}`, { avatar: { emoji: '🦊', color: '#8b5cf6' } })).body.avatar, { emoji: '🦊', color: '#8b5cf6' });
+
+  // Creation d'un profil, qui ne peut pas se connecter par mot de passe
+  const kid = (await call('POST', '/me/profiles', { name: 'Tom', avatar: { emoji: '🐼', color: '#22c55e' } })).body;
+  assert.equal(kid.name, 'Tom');
+  assert.equal(kid.is_profile, true);
+  const st = (await call('GET', '/auth/status')).body;
+  assert.deepEqual(st.profiles.map((p) => [p.name, p.is_main]), [[me.display_name || me.username, true], ['Tom', false]]);
+  assert.equal((await call('POST', '/auth/login', { username: kid.username, password: '!' }, { withCookie: false })).status, 401);
+  assert.equal((await call('GET', '/users')).body.find((u) => u.id === me.id).profile_count, 1);
+  assert.equal((await call('GET', '/users')).body.some((u) => u.id === kid.id), false);
+
+  // Passage sur le profil : identite, droits de spectateur, progression separee
+  await call('POST', '/me/profile', { id: kid.id });
+  const asKid = (await call('GET', '/auth/status')).body.user;
+  assert.deepEqual({ id: asKid.id, role: asKid.role, account: asKid.account_id }, { id: kid.id, role: 'viewer', account: me.id });
+  assert.equal((await call('POST', '/series', { title: 'Non' })).status, 403);
+  assert.equal((await call('POST', '/me/profiles', { name: 'Autre' })).status, 403);
+  assert.equal((await call('PUT', '/me/password', { current: 'x', password: 'motdepasse9' })).status, 400);
+  await call('PUT', `/progress/${e.id}`, { pos: 0, dur: 0, watched: true, manual: true, delta: 90 });
+  const hist = (await call('GET', '/me/history')).body;
+  assert.deepEqual(hist.map((h) => [h.episode_id, h.series_title, h.watched]), [[e.id, 'Profils', true]]);
+  const top = (await call('GET', '/top')).body;
+  assert.equal(top.find((x) => x.id === s.id)?.viewers, 1);
+  assert.ok(top.every((x, i) => i === 0 || top[i - 1].viewers > x.viewers || (top[i - 1].viewers === x.viewers && top[i - 1].seconds >= x.seconds)));
+  assert.deepEqual((await call('DELETE', '/me/history')).body, { deleted: 1 });
+  assert.deepEqual((await call('GET', '/me/history')).body, []);
+
+  // Retour au profil principal, puis suppression du profil
+  await call('POST', '/me/profile', { id: me.id });
+  assert.equal((await call('GET', '/auth/status')).body.user.id, me.id);
+  assert.equal((await call('DELETE', `/me/profiles/${kid.id}`)).status, 204);
+  assert.equal((await call('GET', '/auth/status')).body.profiles.length, 1);
 });

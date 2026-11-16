@@ -42,6 +42,11 @@ function migrate(db) {
     ['episode', 'storyboard_file', 'TEXT'], ['episode', 'storyboard', 'TEXT'], ['episode', 'ready_at', 'TEXT'],
     ['app_user', 'settings', 'TEXT'], ['app_user', 'last_visit_at', 'TEXT'], ['app_user', 'prev_visit_at', 'TEXT'],
     ['watch_progress', 'seconds_watched', 'REAL NOT NULL DEFAULT 0'], ['watch_progress', 'completions', 'INTEGER NOT NULL DEFAULT 0'],
+    // Profils (sous-identites d'un compte, sans mot de passe), avatars, session sur un profil.
+    ['app_user', 'parent_id', 'INTEGER REFERENCES app_user(id) ON DELETE CASCADE'], ['app_user', 'avatar', 'TEXT'],
+    ['auth_session', 'profile_id', 'INTEGER'],
+    // Fiche : titres original et romaji (recherche, affichage), banniere importee.
+    ['series', 'title_native', 'TEXT'], ['series', 'title_romaji', 'TEXT'], ['series', 'banner_file', 'TEXT'],
   ];
   for (const [table, col, type] of added) {
     if (!has(table, col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);

@@ -20,6 +20,9 @@ export default function Library({ user }) {
   const isAdmin = user.role === 'admin';
   const { data: series, error } = useApi('/series');
   const { data: recentlyAdded } = useApi('/recent');
+  const { data: top } = useApi('/top');
+  const [q, setQ] = useState('');
+  const [genre, setGenre] = useState(null);
   const { data: storage } = useApi(isAdmin ? '/storage' : null);
   const manage = useManage() && isAdmin;
   useProgress(); // re-rendu quand la progression change
@@ -47,11 +50,39 @@ export default function Library({ user }) {
     );
   }
 
+  const genres = [...new Set(series.flatMap((s) => s.genres || []))].sort((a, b) => a.localeCompare(b, 'fr'));
+  const filtering = q.trim() !== '' || genre !== null;
+  const results = filtering ? series.filter((s) => (!genre || s.genres?.includes(genre)) && matches(s, q)) : [];
+  const reco = recommend(series, recent);
+
   return (
     <>
       {featured && !adding && <HeroCarousel slides={pickSlides(series, recent)} hello={`${greeting()} ${firstName}`} />}
 
       {adding && <NewSeries onClose={() => setAdding(false)} />}
+
+      <section className="finder" aria-label="Rechercher une série">
+        <div className="search-box">
+          <Icon name="search" size={18} />
+          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher une série (titre, romaji, japonais)…" aria-label="Rechercher une série" />
+          {q && <button className="icon-btn ghost" onClick={() => setQ('')} aria-label="Effacer la recherche"><Icon name="close" size={16} /></button>}
+        </div>
+        {genres.length > 0 && (
+          <div className="genre-chips" role="group" aria-label="Filtrer par genre">
+            <button className={genre === null ? 'sel' : ''} aria-pressed={genre === null} onClick={() => setGenre(null)}>Tous</button>
+            {genres.map((g) => <button key={g} className={genre === g ? 'sel' : ''} aria-pressed={genre === g} onClick={() => setGenre(genre === g ? null : g)}>{g}</button>)}
+          </div>
+        )}
+      </section>
+
+      {filtering ? (
+        <section className="shelf">
+          <div className="shelf-head"><h2>{results.length} résultat{results.length > 1 ? 's' : ''}{genre ? ` · ${genre}` : ''}</h2></div>
+          {results.length === 0 ? <p className="empty">Aucune série ne correspond.</p> : (
+            <ul className="poster-grid">{results.map((s, i) => <li key={s.id} style={{ '--i': i }}><PosterCard s={s} /></li>)}</ul>
+          )}
+        </section>
+      ) : (<>
 
       {series.some((s) => s.in_list) && (
         <section className="shelf">
@@ -77,6 +108,31 @@ export default function Library({ user }) {
                 </Link>
               </li>
             ))}
+          </ul>
+        </section>
+      )}
+
+      {top?.length > 0 && (
+        <section className="shelf">
+          <div className="shelf-head"><h2>Top 10 de la famille</h2></div>
+          <ol className="row-scroll top10">
+            {top.map((s, i) => (
+              <li key={s.id}>
+                <Link to={`/serie/${s.id}`} className="top-card" style={accentStyle(s.accent)} aria-label={`Numéro ${i + 1} : ${s.title}, ${s.viewers} personne${s.viewers > 1 ? 's' : ''}`}>
+                  <span className="top-rank" aria-hidden="true">{i + 1}</span>
+                  <Poster series={s} />
+                </Link>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+
+      {reco && (
+        <section className="shelf">
+          <div className="shelf-head"><h2>Parce que tu as regardé {reco.anchor.title}</h2></div>
+          <ul className="row-scroll posters">
+            {reco.items.map((s) => <li key={s.id}><PosterCard s={s} /></li>)}
           </ul>
         </section>
       )}
@@ -113,6 +169,8 @@ export default function Library({ user }) {
         </ul>
       </section>
 
+      </>)}
+
       {manage && storage && (
         <p className="muted small storage">
           Vidéos : {formatBytes(storage.videos_bytes)} · Espace libre sur le serveur : {formatBytes(storage.free_bytes)}
@@ -139,6 +197,33 @@ function PosterCard({ s }) {
       </span>
     </Link>
   );
+}
+
+// Recherche sans accents ni majuscules, sur le titre, le romaji et le titre japonais.
+const norm = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+function matches(s, q) {
+  const n = norm(q.trim());
+  return !n || [s.title, s.title_romaji, s.title_native].some((t) => norm(t).includes(n));
+}
+
+// « Parce que tu as regarde... » : series pas encore commencees, classees par genres en commun avec celles vues.
+function recommend(series, recent) {
+  const seen = new Set(recent.map((r) => r.seriesId));
+  const weights = new Map();
+  for (const s of series.filter((x) => seen.has(x.id))) for (const g of s.genres || []) weights.set(g, (weights.get(g) || 0) + 1);
+  if (!weights.size) return null;
+  const items = series
+    .filter((s) => !seen.has(s.id) && s.episode_count > 0)
+    .map((s) => ({ s, score: (s.genres || []).reduce((t, g) => t + (weights.get(g) || 0), 0) }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10)
+    .map((x) => x.s);
+  if (!items.length) return null;
+  // Serie de reference : la plus recemment regardee qui partage un genre avec la premiere suggestion.
+  const anchorId = recent.find((r) => series.find((x) => x.id === r.seriesId)?.genres?.some((g) => items[0].genres?.includes(g)))?.seriesId;
+  const anchor = series.find((x) => x.id === anchorId);
+  return anchor ? { anchor, items } : null;
 }
 
 // Series mises en avant : en cours d'abord, puis avec des nouveautes, puis les autres ; 5 au plus.

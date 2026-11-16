@@ -4,7 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
-import { ROLES, createAuth, hashPassword, validatePassword, validateUsername, verifyPassword } from './lib/auth.js';
+import {
+  MAX_PROFILES, ROLES, createAuth, hashPassword, publicUser, validateAvatar, validatePassword, validateUsername, verifyPassword,
+} from './lib/auth.js';
 import { SUBTITLE_EXTENSIONS, toWebVtt } from './lib/subtitles.js';
 import { createProcessor } from './lib/processor.js';
 import { dominantColor, ffmpegAvailable } from './lib/media.js';
@@ -207,6 +209,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
         db.prepare("UPDATE app_user SET last_visit_at = datetime('now') WHERE id = ?").run(st.user.id);
       }
       st.user.settings = { ...DEFAULT_SETTINGS, ...(u.settings ? JSON.parse(u.settings) : {}) };
+      st.profiles = profilesOf(st.user.account_id);
     }
     res.json(st);
   });
@@ -214,6 +217,12 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     username: req.body?.username, password: req.body?.password, remember: req.body?.remember !== false,
   })));
   r.post('/auth/logout', (req, res) => { auth.logout(req, res); res.status(204).end(); });
+
+  // Profils d'un compte : le compte lui-meme (profil principal) puis ses profils.
+  function profilesOf(accountId) {
+    return db.prepare('SELECT * FROM app_user WHERE (id = ? OR parent_id = ?) AND disabled = 0 ORDER BY parent_id IS NOT NULL, id')
+      .all(accountId, accountId).map((u) => ({ ...publicUser({ ...u, account_id: accountId }), name: u.display_name || u.username, is_main: u.id === accountId }));
+  }
 
   // Toutes les routes suivantes exigent une session.
   r.use(auth.requireSession);
@@ -224,6 +233,8 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     if (req.method === 'GET' && !/^\/(storage|users|admin)(\/|$)/.test(req.path)) return next();
     if (/^\/(progress|watchlist)\/\d+$/.test(req.path) && ['PUT', 'DELETE'].includes(req.method)) return next();
     if (['/me/password', '/me/settings'].includes(req.path) && req.method === 'PUT') return next();
+    if (/^\/me\/(profile|profiles)(\/\d+)?$/.test(req.path) && ['POST', 'PUT', 'DELETE'].includes(req.method)) return next();
+    if (req.path === '/me/history' && req.method === 'DELETE') return next();
     return auth.requireAdmin(req, res, next);
   });
   const isAdmin = (req) => req.user.role === 'admin';
@@ -237,6 +248,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
 
   // ---------- Mon compte ----------
   r.put('/me/password', (req, res) => {
+    if (req.user.parent_id) throw httpError(400, 'Les profils n\'ont pas de mot de passe : celui du compte s\'applique');
     const { current, password } = req.body || {};
     if (typeof current !== 'string' || !verifyPassword(current, req.user.password_hash)) throw httpError(400, 'Mot de passe actuel incorrect');
     validatePassword(password);
@@ -258,6 +270,91 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     }
     db.prepare('UPDATE app_user SET settings = ? WHERE id = ?').run(JSON.stringify(next), req.user.id);
     res.json(next);
+  });
+
+  // ---------- Profils (« Qui regarde ? ») ----------
+  const isMain = (req) => !req.user.parent_id;
+  const profileName = (v) => {
+    const t = text(v, { field: 'Prénom du profil', max: 40, required: true });
+    return t;
+  };
+
+  r.get('/me/profiles', (req, res) => res.json(profilesOf(req.user.account_id)));
+
+  // Choix du profil sur cet appareil (id du compte = profil principal).
+  r.post('/me/profile', (req, res) => {
+    const pid = id(req.body?.id);
+    const target = profilesOf(req.user.account_id).find((p) => p.id === pid);
+    if (!target) throw notFound('Profil');
+    const token = req.user.session_hash || null;
+    const hash = token || db.prepare('SELECT token_hash FROM auth_session WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(req.user.account_id)?.token_hash;
+    db.prepare('UPDATE auth_session SET profile_id = ? WHERE token_hash = ?').run(target.is_main ? null : pid, hash);
+    res.json(target);
+  });
+
+  r.post('/me/profiles', (req, res) => {
+    if (!isMain(req)) throw httpError(403, 'Seul le profil principal du compte peut créer des profils');
+    const count = db.prepare('SELECT COUNT(*) AS n FROM app_user WHERE parent_id = ?').get(req.user.account_id).n;
+    if (count >= MAX_PROFILES) throw httpError(409, `${MAX_PROFILES} profils maximum par compte`);
+    const name = profileName(req.body?.name);
+    const avatar = req.body?.avatar === undefined ? null : validateAvatar(req.body.avatar);
+    const username = `profil-${req.user.account_id}-${crypto.randomBytes(4).toString('hex')}`;
+    const info = db.prepare("INSERT INTO app_user (username, display_name, password_hash, role, parent_id, avatar) VALUES (?, ?, '!', 'viewer', ?, ?)")
+      .run(username, name, req.user.account_id, avatar ? JSON.stringify(avatar) : null);
+    res.status(201).json(profilesOf(req.user.account_id).find((p) => p.id === info.lastInsertRowid));
+  });
+
+  // Nom et avatar : chacun modifie le sien ; le profil principal modifie tous ceux du compte.
+  r.put('/me/profiles/:id', (req, res) => {
+    const pid = id(req.params.id);
+    const target = profilesOf(req.user.account_id).find((p) => p.id === pid);
+    if (!target) throw notFound('Profil');
+    if (pid !== req.user.id && !isMain(req)) throw httpError(403, 'Seul le profil principal peut modifier les autres profils');
+    const b = req.body || {};
+    const name = 'name' in b ? profileName(b.name) : target.display_name;
+    const avatar = 'avatar' in b ? validateAvatar(b.avatar) : target.avatar;
+    db.prepare('UPDATE app_user SET display_name = ?, avatar = ? WHERE id = ?').run(name, avatar ? JSON.stringify(avatar) : null, pid);
+    res.json(profilesOf(req.user.account_id).find((p) => p.id === pid));
+  });
+
+  r.delete('/me/profiles/:id', (req, res) => {
+    const pid = id(req.params.id);
+    if (!isMain(req)) throw httpError(403, 'Seul le profil principal peut supprimer des profils');
+    const p = db.prepare('SELECT * FROM app_user WHERE id = ? AND parent_id = ?').get(pid, req.user.account_id);
+    if (!p) throw notFound('Profil');
+    db.transaction(() => {
+      db.prepare('UPDATE auth_session SET profile_id = NULL WHERE profile_id = ?').run(pid);
+      db.prepare('DELETE FROM app_user WHERE id = ?').run(pid); // progression, ma liste : supprimees en cascade
+    })();
+    res.status(204).end();
+  });
+
+  // ---------- Mon historique ----------
+  r.get('/me/history', (req, res) => {
+    const rows = db.prepare(`SELECT p.episode_id, p.pos, p.dur, p.watched, p.updated_at, p.seconds_watched,
+        e.number, e.title, e.season, e.thumb_file, e.series_id, s.title AS series_title
+      FROM watch_progress p JOIN episode e ON e.id = p.episode_id JOIN series s ON s.id = e.series_id
+      WHERE p.user_id = ? ORDER BY p.updated_at DESC LIMIT 500`).all(req.user.id);
+    res.json(rows.map(({ thumb_file: t, ...r0 }) => ({
+      ...r0, watched: !!r0.watched,
+      thumb_url: t ? `/api/media/thumb/${r0.episode_id}?v=${version(t)}` : null,
+    })));
+  });
+  r.delete('/me/history', (req, res) => {
+    const n = db.prepare('DELETE FROM watch_progress WHERE user_id = ?').run(req.user.id).changes;
+    res.json({ deleted: n });
+  });
+
+  // ---------- Top 10 de la famille ----------
+  // Series regardees par le plus de personnes (profils compris), puis par temps regarde.
+  r.get('/top', (req, res) => {
+    const rows = db.prepare(`SELECT s.*,
+        COUNT(DISTINCT CASE WHEN p.completions > 0 OR p.seconds_watched >= 60 THEN p.user_id END) AS viewers,
+        COALESCE(SUM(p.seconds_watched), 0) AS seconds,
+        (SELECT COUNT(*) FROM episode e2 WHERE e2.series_id = s.id AND e2.status = 'ready') AS episode_count
+      FROM series s JOIN episode e ON e.series_id = s.id JOIN watch_progress p ON p.episode_id = e.id
+      GROUP BY s.id HAVING viewers > 0 ORDER BY viewers DESC, seconds DESC LIMIT 10`).all();
+    res.json(rows.map((x) => ({ ...seriesView(x), viewers: x.viewers, seconds: x.seconds })));
   });
 
   // ---------- Ma liste ----------
@@ -317,11 +414,13 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
   });
 
   // ---------- Comptes (administrateurs) ----------
-  const listUsers = () => db.prepare(`SELECT u.id, u.username, u.display_name, u.role, u.disabled, u.created_at,
-      (SELECT MAX(updated_at) FROM watch_progress p WHERE p.user_id = u.id) AS last_watch
-    FROM app_user u ORDER BY u.role, u.username COLLATE NOCASE`).all().map((u) => ({ ...u, disabled: !!u.disabled }));
-  const activeAdmins = () => db.prepare("SELECT COUNT(*) AS n FROM app_user WHERE role = 'admin' AND disabled = 0").get().n;
-  const getUser = (uid) => db.prepare('SELECT * FROM app_user WHERE id = ?').get(uid);
+  const listUsers = () => db.prepare(`SELECT u.id, u.username, u.display_name, u.role, u.disabled, u.created_at, u.avatar,
+      (SELECT MAX(updated_at) FROM watch_progress p WHERE p.user_id = u.id OR p.user_id IN (SELECT id FROM app_user c WHERE c.parent_id = u.id)) AS last_watch,
+      (SELECT COUNT(*) FROM app_user c WHERE c.parent_id = u.id) AS profile_count
+    FROM app_user u WHERE u.parent_id IS NULL ORDER BY u.role, u.username COLLATE NOCASE`).all()
+    .map((u) => ({ ...u, disabled: !!u.disabled, avatar: u.avatar ? JSON.parse(u.avatar) : null }));
+  const activeAdmins = () => db.prepare("SELECT COUNT(*) AS n FROM app_user WHERE role = 'admin' AND disabled = 0 AND parent_id IS NULL").get().n;
+  const getUser = (uid) => db.prepare('SELECT * FROM app_user WHERE id = ? AND parent_id IS NULL').get(uid);
   const displayName = (v) => text(v, { field: 'Nom affiché', max: 60 });
   const role = (v) => {
     if (!ROLES.includes(v)) throw httpError(400, 'Rôle invalide');
@@ -386,9 +485,9 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     }
     const epLabel = (e) => ({ id: e.id, series_id: e.series_id, series_title: e.series_title, number: e.number, title: e.title });
 
-    const activity = db.prepare(`SELECT u.username, u.display_name, p.episode_id, p.pos, p.dur, p.watched, p.updated_at, e.number, s.title AS series_title, s.id AS series_id
+    const activity = db.prepare(`SELECT u.username, u.display_name, u.avatar, p.episode_id, p.pos, p.dur, p.watched, p.updated_at, e.number, s.title AS series_title, s.id AS series_id
       FROM watch_progress p JOIN app_user u ON u.id = p.user_id JOIN episode e ON e.id = p.episode_id JOIN series s ON s.id = e.series_id
-      ORDER BY p.updated_at DESC LIMIT 12`).all().map((a) => ({ ...a, watched: !!a.watched }));
+      ORDER BY p.updated_at DESC LIMIT 12`).all().map((a) => ({ ...a, watched: !!a.watched, avatar: a.avatar ? JSON.parse(a.avatar) : null }));
     const users = db.prepare(`SELECT
         COUNT(*) AS total,
         SUM(role = 'admin') AS admins,
@@ -418,7 +517,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
       users: { ...users, admins: users.admins || 0, disabled: users.disabled || 0 },
       stats: {
         // Temps reellement regarde (envoye par le lecteur), episodes termines, par personne.
-        by_user: db.prepare(`SELECT u.id, u.username, u.display_name,
+        by_user: db.prepare(`SELECT u.id, u.username, u.display_name, u.avatar,
             COALESCE(SUM(p.seconds_watched), 0) AS seconds, COALESCE(SUM(p.completions), 0) AS completed,
             COUNT(p.episode_id) AS started, MAX(p.updated_at) AS last_watch
           FROM app_user u LEFT JOIN watch_progress p ON p.user_id = u.id
@@ -552,7 +651,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     const s = getSeries(id(req.params.id));
     if (!s) throw notFound('Serie');
     const a = await getAnime(id(req.body?.id));
-    const fields = { anilist_id: a.id, genres: JSON.stringify(a.genres), year: a.year };
+    const fields = { anilist_id: a.id, genres: JSON.stringify(a.genres), year: a.year, title_native: a.native || null, title_romaji: a.romaji || null };
     if (req.body?.description && a.description) fields.description = a.description;
     if (req.body?.cover && a.cover) {
       const file = saveImage(await downloadImage(a.cover));

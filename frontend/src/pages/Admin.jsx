@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { useApi } from '../hooks.js';
-import { hueOf } from '../files.js';
+import Avatar from '../components/Avatar.jsx';
 import Icon from '../components/Icon.jsx';
 
 // Mot de passe aleatoire lisible (sans caracteres ambigus), a transmettre a la personne.
@@ -156,10 +156,10 @@ function UserRow({ user: u, me }) {
   return (
     <li className={`user-row${u.disabled ? ' disabled' : ''}`}>
       <div className="user-main">
-        <span className="avatar big" style={{ '--h': hueOf(u.username) }}>{[...name][0]?.toUpperCase()}</span>
+        <Avatar user={u} size="lg" />
         <div className="user-text">
           <strong>{name} {self && <span className="muted small">(toi)</span>}</strong>
-          <span className="muted small">@{u.username}{formatDate(u.last_watch) ? ` · vu pour la dernière fois le ${formatDate(u.last_watch)}` : ''}</span>
+          <span className="muted small">@{u.username}{u.profile_count > 0 ? ` · ${u.profile_count} profil${u.profile_count > 1 ? 's' : ''}` : ''}{formatDate(u.last_watch) ? ` · vu pour la dernière fois le ${formatDate(u.last_watch)}` : ''}</span>
         </div>
         <span className={`role-badge ${u.role}`}>{u.role === 'admin' && <Icon name="shield" size={13} />} {ROLE_LABEL[u.role]}</span>
         {u.disabled && <span className="tag warn">Désactivé</span>}
