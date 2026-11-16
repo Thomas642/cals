@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { useApi } from '../hooks.js';
-import { episodeLabel, formatBytes } from '../files.js';
+import { accentStyle, episodeLabel, formatBytes } from '../files.js';
 import { recentBySeries, useProgress } from '../progress.js';
 import { setManage, useManage } from '../manage.js';
 import Icon from '../components/Icon.jsx';
@@ -124,7 +124,7 @@ export default function Library({ user }) {
 
 function PosterCard({ s }) {
   return (
-    <Link to={`/serie/${s.id}`} className="poster-card">
+    <Link to={`/serie/${s.id}`} className="poster-card" style={accentStyle(s.accent)}>
       <div className="poster-wrap">
         <Poster series={s} />
         <span className="poster-hover"><span className="poster-play"><Icon name="play" size={22} /></span></span>

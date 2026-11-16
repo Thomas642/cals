@@ -5,7 +5,7 @@ import { useApi } from '../hooks.js';
 import { enqueueUpload, useUploads } from '../uploads.js';
 import {
   SUBTITLE_EXT, SUBTITLE_LANGS, VIDEO_EXT, episodeLabel, formatBytes, guessEpisodeNumber, guessSeason, guessSubtitleLang,
-  friendlyError, isSubtitle, isVideo, readTextFile, seasonName,
+  accentStyle, friendlyError, isSubtitle, isVideo, readTextFile, seasonName,
 } from '../files.js';
 import { markUnwatched, markWatched, nextToWatch, progressOf, useProgress } from '../progress.js';
 import { useManage } from '../manage.js';
@@ -97,7 +97,7 @@ export default function Series({ user }) {
   }
 
   return (
-    <>
+    <div className="themed" style={accentStyle(series.accent)}>
       <section className="series-hero">
         {/* Fond net : image de l'episode a lancer ; sinon l'affiche floutee. */}
         <div className="hero-media">
@@ -113,9 +113,13 @@ export default function Series({ user }) {
             <div className="series-hero-text">
               <h1>{series.title}</h1>
               <p className="meta">
+                {series.year && <>{series.year} · </>}
                 {ready.length} épisode{ready.length > 1 ? 's' : ''}
                 {ready.length > 0 && <> · {subtitled === ready.length ? <span className="tag">VOSTFR</span> : `${subtitled} sous-titré${subtitled > 1 ? 's' : ''}`}</>}
               </p>
+              {series.genres?.length > 0 && (
+                <div className="genres">{series.genres.map((g) => <span key={g} className="genre">{g}</span>)}</div>
+              )}
               {series.description && <p className="hero-desc">{series.description}</p>}
               <div className="row-actions start">
                 {next && (
@@ -169,7 +173,12 @@ export default function Series({ user }) {
           </ul>
         )}
       </section>
-    </>
+      {series.anilist_id && (
+        <p className="source-note muted small">
+          Genres, année{series.description ? ' et synopsis' : ''} : fiche <a href={`https://anilist.co/anime/${series.anilist_id}`} target="_blank" rel="noreferrer noopener">AniList</a>.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -251,6 +260,7 @@ function BackLink() {
 function ManagePanel({ series }) {
   const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
+  const [anilist, setAnilist] = useState(false);
   const [report, setReport] = useState(null);
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -342,6 +352,7 @@ function ManagePanel({ series }) {
         <h2><Icon name="upload" size={18} /> Gestion de la série</h2>
         <div className="row-actions">
           <button className="ghost-btn" onClick={() => setEditing(!editing)}><Icon name="edit" size={16} /> Titre et description</button>
+          <button className="ghost-btn" onClick={() => setAnilist(!anilist)}><Icon name="sparkle" size={16} /> Fiche AniList</button>
           <button className="ghost-btn" onClick={() => coverInput.current?.click()}><Icon name="library" size={16} /> {series.has_custom_cover ? 'Changer l\'affiche' : 'Choisir une affiche'}</button>
           {series.has_custom_cover && <button className="ghost-btn" onClick={removeCover}>Retirer l'affiche</button>}
           <button className="ghost-btn danger" onClick={removeSeries}><Icon name="trash" size={16} /> Supprimer la série</button>
@@ -351,6 +362,7 @@ function ManagePanel({ series }) {
       </div>
       {error && <p className="alert">{error}</p>}
       {editing && <EditSeries series={series} onClose={() => setEditing(false)} />}
+      {anilist && <AniListPanel series={series} onClose={() => setAnilist(false)} />}
 
       <div
         className={`dropzone${dragOver ? ' over' : ''}`}
@@ -377,6 +389,77 @@ function ManagePanel({ series }) {
         </div>
       )}
     </section>
+  );
+}
+
+/** Recherche d'une fiche sur AniList et import (genres, annee ; synopsis et affiche au choix). */
+function AniListPanel({ series, onClose }) {
+  const [q, setQ] = useState(series.title);
+  const [results, setResults] = useState(null);
+  const [picked, setPicked] = useState(null);
+  const [useDesc, setUseDesc] = useState(!series.description);
+  const [useCover, setUseCover] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function search(e) {
+    e?.preventDefault();
+    setBusy(true); setError(null); setPicked(null);
+    try { setResults(await api.refresh(`/admin/anilist/search?q=${encodeURIComponent(q)}`)); } catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+  useEffect(() => { search(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function importIt() {
+    setBusy(true); setError(null);
+    try {
+      await api.post(`/series/${series.id}/anilist`, { id: picked.id, description: useDesc, cover: useCover });
+      onClose();
+    } catch (err) { setError(err.message); setBusy(false); }
+  }
+
+  return (
+    <div className="anilist">
+      <form className="anilist-search" onSubmit={search}>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Titre de l'anime (romaji ou anglais)" aria-label="Rechercher sur AniList" />
+        <button className="primary" disabled={busy || !q.trim()}>{busy ? <span className="spinner" /> : 'Rechercher'}</button>
+        <button type="button" className="ghost-btn" onClick={onClose}>Fermer</button>
+      </form>
+      {error && <p className="alert small">{error}</p>}
+      {results?.length === 0 && <p className="muted small">Aucun résultat.</p>}
+      {results?.length > 0 && !picked && (
+        <ul className="anilist-results">
+          {results.map((r) => (
+            <li key={r.id}>
+              <button className="anilist-item" onClick={() => setPicked(r)}>
+                {r.cover_small && <img src={r.cover_small} alt="" loading="lazy" referrerPolicy="no-referrer" />}
+                <span className="grow">
+                  <strong>{r.title}</strong>
+                  <span className="muted small">{[r.romaji !== r.title ? r.romaji : null, r.year, r.format, r.episodes ? `${r.episodes} ép.` : null].filter(Boolean).join(' · ')}</span>
+                  <span className="small genres-line">{r.genres.join(', ')}</span>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {picked && (
+        <div className="anilist-pick">
+          {picked.cover_small && <img src={picked.cover_small} alt="" referrerPolicy="no-referrer" />}
+          <div className="grow">
+            <strong>{picked.title}</strong>
+            <p className="muted small">{[picked.year, picked.format, picked.genres.join(', ')].filter(Boolean).join(' · ')}</p>
+            {picked.description && <p className="small pick-desc">{picked.description}</p>}
+            <label className="check"><input type="checkbox" checked={useDesc} onChange={(e) => setUseDesc(e.target.checked)} disabled={!picked.description} /> Remplacer la description par ce synopsis (en anglais, modifiable ensuite)</label>
+            <label className="check"><input type="checkbox" checked={useCover} onChange={(e) => setUseCover(e.target.checked)} disabled={!picked.cover} /> Utiliser cette affiche (l'image reste la propriété de ses ayants droit)</label>
+            <p className="muted small">Les genres et l'année sont toujours importés.</p>
+            <div className="row-actions start">
+              <button className="primary" onClick={importIt} disabled={busy}>{busy ? <span className="spinner" /> : <Icon name="check" size={16} />} Importer</button>
+              <button className="ghost-btn" onClick={() => setPicked(null)}>Autre résultat</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

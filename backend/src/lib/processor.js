@@ -8,7 +8,7 @@ import { convert, extractStoryboard, extractSubtitle, extractThumbnail, ffmpegAv
 const LANGS = { fre: 'fr', fra: 'fr', fr: 'fr', eng: 'en', en: 'en', jpn: 'ja', ja: 'ja' };
 const LABELS = { fr: 'Français', en: 'English', ja: '日本語' };
 
-export function createProcessor(db, { mediaDir, enabled = process.env.VIDEO_PROCESSING !== 'off', log = console } = {}) {
+export function createProcessor(db, { mediaDir, enabled = process.env.VIDEO_PROCESSING !== 'off', log = console, onThumbnail } = {}) {
   const abs = (rel) => path.join(mediaDir, rel);
   const queue = [];
   const live = new Map(); // episode -> progression en cours (0..1), lue par l'API
@@ -35,7 +35,10 @@ export function createProcessor(db, { mediaDir, enabled = process.env.VIDEO_PROC
     const thumb = `images/${crypto.randomUUID()}.jpg`;
     try {
       await extractThumbnail(abs(e.video_file), abs(thumb), dur > 0 ? dur * 0.25 : 10);
-      if (get(id) && !get(id).thumb_file) set(id, { thumb_file: thumb }); else fs.rmSync(abs(thumb), { force: true });
+      if (get(id) && !get(id).thumb_file) {
+        set(id, { thumb_file: thumb });
+        await onThumbnail?.(e.series_id);
+      } else fs.rmSync(abs(thumb), { force: true });
     } catch (err) {
       fs.rmSync(abs(thumb), { force: true });
       log.warn?.(`[traitement] miniature episode ${id} : ${err.message}`);

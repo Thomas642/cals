@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { useApi } from '../hooks.js';
-import { episodeLabel, seasonName } from '../files.js';
+import { accentStyle, episodeLabel, seasonName } from '../files.js';
 import { markWatched, progressOf, recordProgress, useProgress } from '../progress.js';
 import { updateSettings, useSettings } from '../settings.js';
 import { useManage } from '../manage.js';
@@ -62,7 +62,7 @@ export default function Watch({ user }) {
   const multiSeason = new Set(ready.map((e) => e.season)).size > 1;
 
   return (
-    <div className="watch">
+    <div className="watch themed" style={accentStyle(ep.series.accent)}>
       <Link to={`/serie/${ep.series.id}`} className="back"><Icon name="chevronLeft" size={18} /> {ep.series.title}</Link>
       <Player
         key={ep.video_url}

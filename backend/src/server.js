@@ -5,6 +5,7 @@ const db = openDatabase();
 const port = Number(process.env.PORT) || 3000;
 const app = createApp(db);
 app.locals.processor.resume();
+app.locals.refreshAccents().catch((err) => console.error('[couleurs]', err.message));
 const server = app.listen(port, () => {
   console.log(`API Animes sur le port ${port} (medias : ${process.env.MEDIA_DIR || 'data/media'})`);
 });
