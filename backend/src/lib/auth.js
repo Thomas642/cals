@@ -10,6 +10,17 @@ const MAX_FAILS = 5;            // tentatives ratees tolerees par IP...
 const LOCK_MINUTES = 15;        // ...avant blocage temporaire
 const GLOBAL_MAX_FAILS = 30;    // echecs toutes IP confondues sur la fenetre (l'IP client peut etre falsifiee)
 export const ROLES = ['admin', 'viewer'];
+// Avatars : un emoji et une couleur de fond, choisis dans ces listes.
+export const AVATAR_EMOJIS = ['🦊', '🐱', '🐼', '🐲', '🐧', '🦄', '🐸', '🐙', '🐰', '🦁', '🐺', '🐯',
+  '🌸', '⭐', '🌙', '🔥', '⚡', '🍙', '🍜', '🍡', '🎮', '👾', '🎧', '🗡️'];
+export const AVATAR_COLORS = ['#ff4f81', '#8b5cf6', '#3987e5', '#14b8a6', '#22c55e', '#eab308', '#f97316', '#ef4444', '#ec4899', '#64748b'];
+export const MAX_PROFILES = 6;
+
+export function validateAvatar(a) {
+  if (a === null) return null;
+  if (!a || !AVATAR_EMOJIS.includes(a.emoji) || !AVATAR_COLORS.includes(a.color)) throw fail(400, 'Avatar invalide');
+  return { emoji: a.emoji, color: a.color };
+}
 
 export function hashPassword(password) {
   const salt = crypto.randomBytes(16);
@@ -62,7 +73,10 @@ export function isConfigured(db) {
   return !!db.prepare("SELECT 1 FROM app_user WHERE role = 'admin' AND disabled = 0").get();
 }
 
-export const publicUser = (u) => u && ({ id: u.id, username: u.username, display_name: u.display_name || null, role: u.role });
+export const publicUser = (u) => u && ({
+  id: u.id, username: u.username, display_name: u.display_name || null, role: u.role,
+  avatar: u.avatar ? JSON.parse(u.avatar) : null, is_profile: !!u.parent_id, account_id: u.account_id ?? u.id,
+});
 
 const sha256 = (v) => crypto.createHash('sha256').update(v).digest('hex');
 
@@ -89,12 +103,22 @@ export function createAuth(db) {
   const fails = new Map(); // ip -> { count, until }
   let globalFails = [];     // horodatages des echecs recents, toutes IP
 
-  /** Compte connecte (null si pas de session valide ou compte desactive). */
+  /**
+   * Identite connectee (null si pas de session valide ou compte desactive) : le compte, ou le profil choisi
+   * sur cet appareil (« Qui regarde ? »). account_id designe toujours le compte.
+   */
   function currentUser(req) {
     const token = parseCookies(req.headers.cookie)[COOKIE];
     if (!token) return null;
-    return db.prepare(`SELECT u.* FROM auth_session s JOIN app_user u ON u.id = s.user_id
-      WHERE s.token_hash = ? AND s.expires_at > datetime('now') AND u.disabled = 0`).get(sha256(token)) || null;
+    const account = db.prepare(`SELECT u.*, s.profile_id AS session_profile, s.token_hash AS session_hash FROM auth_session s
+      JOIN app_user u ON u.id = s.user_id
+      WHERE s.token_hash = ? AND s.expires_at > datetime('now') AND u.disabled = 0`).get(sha256(token));
+    if (!account) return null;
+    if (account.session_profile) {
+      const p = db.prepare('SELECT * FROM app_user WHERE id = ? AND parent_id = ? AND disabled = 0').get(account.session_profile, account.id);
+      if (p) return { ...p, account_id: account.id, session_hash: account.session_hash };
+    }
+    return { ...account, account_id: account.id };
   }
 
   function status(req) {
@@ -113,7 +137,8 @@ export function createAuth(db) {
     globalFails = globalFails.filter((t) => t > windowStart);
     if (globalFails.length >= GLOBAL_MAX_FAILS) throw fail(429, `Trop de tentatives. Réessayer dans ${LOCK_MINUTES} min.`);
     if (!isConfigured(db)) throw fail(503, 'Aucun compte administrateur configuré sur le serveur.');
-    const user = typeof username === 'string' ? db.prepare('SELECT * FROM app_user WHERE username = ?').get(username.trim()) : null;
+    // Les profils n'ont pas de mot de passe : seuls les comptes se connectent.
+    const user = typeof username === 'string' ? db.prepare('SELECT * FROM app_user WHERE username = ? AND parent_id IS NULL').get(username.trim()) : null;
     const passOk = typeof password === 'string' && verifyPassword(password, user ? user.password_hash : DUMMY_HASH);
     if (!user || !passOk || user.disabled) {
       const count = (f && f.until <= Date.now() && f.count >= MAX_FAILS ? 0 : f?.count || 0) + 1;

@@ -15,10 +15,18 @@ import Watch from './pages/Watch.jsx';
 import Admin from './pages/Admin.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Account from './pages/Account.jsx';
+import History from './pages/History.jsx';
+import WhoWatching from './pages/WhoWatching.jsx';
+
+// « Qui regarde ? » : demande une fois par session de navigateur (onglet), si le compte a plusieurs profils.
+const PICKED_KEY = 'anime:profile-picked';
+const picked = () => { try { return sessionStorage.getItem(PICKED_KEY) === '1'; } catch { return true; } };
+const setPicked = (v) => { try { if (v) sessionStorage.setItem(PICKED_KEY, '1'); else sessionStorage.removeItem(PICKED_KEY); } catch { /* ignore */ } };
 
 export default function App() {
   const [auth, setAuth] = useState(undefined);
   const [error, setError] = useState(null);
+  const [choosing, setChoosing] = useState(false);
 
   const boot = useCallback(async () => {
     try {
@@ -28,6 +36,7 @@ export default function App() {
         if (status.user.role !== 'admin') setManage(false);
         initSettings(status.user.settings);
         await loadProgress();
+        setChoosing(status.profiles?.length > 1 && !picked());
       }
       setAuth(status);
     } catch (e) {
@@ -45,7 +54,21 @@ export default function App() {
   }, [error, boot]);
   useEffect(() => onUnauthorized(() => { api.clear(); clearProgress(); setAuth((a) => ({ ...a, authenticated: false, user: null })); }), []);
 
+  const pickProfile = useCallback(async (p) => {
+    try {
+      await api.send('POST', '/me/profile', { id: p.id });
+      setPicked(true);
+      api.clear();
+      clearProgress();
+      // L'ecran se ferme apres le rechargement de l'identite (boot) : pas d'affichage avec l'ancien profil.
+      await boot();
+    } catch (e) {
+      window.alert(e.message);
+    }
+  }, [boot]);
+
   const logout = useCallback(async () => {
+    setPicked(false);
     await api.post('/auth/logout').catch(() => {});
     api.clear();
     clearProgress();
@@ -57,7 +80,10 @@ export default function App() {
   if (!auth.authenticated) {
     return <Login configured={auth.configured} onLoggedIn={() => { api.clear(); setAuth(undefined); boot(); }} />;
   }
-  return <Shell user={auth.user} onLogout={logout} />;
+  if (choosing) {
+    return <WhoWatching profiles={auth.profiles} onPick={pickProfile} />;
+  }
+  return <Shell user={auth.user} profiles={auth.profiles || []} onLogout={logout} onSwitchProfile={() => { setPicked(false); setChoosing(true); }} />;
 }
 
 function BootError({ error, onRetry }) {
@@ -76,7 +102,7 @@ function BootError({ error, onRetry }) {
   );
 }
 
-function Shell({ user, onLogout }) {
+function Shell({ user, profiles, onLogout, onSwitchProfile }) {
   const location = useLocation();
   const [scrolled, setScrolled] = useState(false);
   const isAdmin = user.role === 'admin';
@@ -96,7 +122,7 @@ function Shell({ user, onLogout }) {
     <div className="layout">
       <header className={`topbar${scrolled ? ' scrolled' : ''}`}>
         <Link to="/" className="brand" aria-label="Accueil"><Logo size={34} /></Link>
-        <AccountMenu user={user} onLogout={onLogout} />
+        <AccountMenu user={user} profiles={profiles} onLogout={onLogout} onSwitchProfile={onSwitchProfile} />
       </header>
       <main className="page" key={location.pathname}>
         <Routes>
@@ -104,6 +130,7 @@ function Shell({ user, onLogout }) {
           <Route path="/serie/:id" element={<Series user={user} />} />
           <Route path="/regarder/:id" element={<Watch user={user} />} />
           <Route path="/compte" element={<Account user={user} />} />
+          <Route path="/historique" element={<History />} />
           {isAdmin && <Route path="/admin" element={<Dashboard />} />}
           {isAdmin && <Route path="/admin/comptes" element={<Admin me={user} />} />}
           <Route path="*" element={<Navigate to="/" replace />} />

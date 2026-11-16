@@ -133,6 +133,26 @@ Menu du compte > **Tableau de bord** (`/admin`), actualisé toutes les 10 second
 - **Serveur** : mémoire vive, charge, durée depuis le démarrage, disponibilité de ffmpeg. Le conteneur lit ces valeurs
   dans le noyau partagé : elles concernent tout le VPS.
 
+### Profils, avatars, historique
+
+- **Profils (« Qui regarde ? »)** : dans « Mon compte et profils », le profil principal d'un compte peut créer jusqu'à
+  6 profils (prénom + avatar). Chaque profil a sa progression, sa liste, ses réglages et son historique. Quand un
+  compte a plusieurs profils, l'écran « Qui regarde ? » s'affiche à l'ouverture du site (une fois par onglet) et
+  « Changer de profil » est dans le menu. Les profils n'ont pas de mot de passe, ne peuvent pas se connecter seuls
+  et ont toujours les droits d'un spectateur, même sous un compte administrateur. Supprimer un profil efface sa
+  progression et sa liste.
+- **Avatars** : un emoji et une couleur, choisis par chacun ; affichés dans le menu, les profils, les comptes,
+  l'activité et les statistiques.
+- **Mon historique** (menu du compte) : tout ce que le profil a regardé, par jour, avec l'heure et l'avancement ;
+  retirer une entrée ou tout effacer (la progression correspondante est remise à zéro).
+
+### Accueil : recherche, Top 10, suggestions
+
+- **Recherche** sur le titre, le titre romaji et le titre japonais (sans tenir compte des accents), et **filtres par
+  genre** (genres des fiches AniList).
+- **Top 10 de la famille** : séries regardées par le plus de personnes (profils compris), puis par temps regardé.
+- **« Parce que tu as regardé… »** : séries pas encore commencées, classées par genres en commun avec celles vues.
+
 ### Import
 
 Les outils d'import et d'édition n'apparaissent qu'avec le **Mode gestion** (menu du compte, administrateurs
@@ -337,6 +357,11 @@ lectures (GET, sauf `/api/users` et `/api/storage`), à sa progression et à son
 | GET | /api/media/storyboard/:id | Planche d'aperçus |
 | GET | /api/admin/anilist/search?q= | Recherche AniList (administrateurs) |
 | POST | /api/series/:id/anilist | Import d'une fiche `{ id, description?, cover? }` |
+| GET / POST | /api/me/profiles | Profils du compte / création `{ name, avatar }` |
+| PUT / DELETE | /api/me/profiles/:id | Prénom et avatar / suppression d'un profil |
+| POST | /api/me/profile | Choisir le profil sur cet appareil `{ id }` |
+| GET / DELETE | /api/me/history | Historique du profil / tout effacer |
+| GET | /api/top | Top 10 de la famille |
 | PUT | /api/me/password | Changer son mot de passe `{ current, password }` |
 | GET | /api/progress | Progression de lecture du compte connecté |
 | PUT / DELETE | /api/progress/:episodeId | Position `{ pos, dur, watched? }` / remise à zéro |

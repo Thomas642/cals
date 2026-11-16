@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { useApi } from '../hooks.js';
-import { episodeLabel, formatBytes, friendlyError, hueOf } from '../files.js';
+import { episodeLabel, formatBytes, friendlyError } from '../files.js';
 import Icon from '../components/Icon.jsx';
+import Avatar from '../components/Avatar.jsx';
 
 // Seuils d'espace libre (part du disque) : en dessous, alerte.
 const WARN_FREE = 0.15;
@@ -161,7 +162,7 @@ export default function Dashboard() {
                   const name = u.display_name || u.username;
                   return (
                     <li key={u.id} title={`${name} : ${formatDuration(u.seconds)}, ${u.completed} épisode${u.completed > 1 ? 's' : ''} terminé${u.completed > 1 ? 's' : ''}`}>
-                      <span className="bar-name">{name}</span>
+                      <span className="bar-name with-avatar"><Avatar user={u} size="sm" /> {name}</span>
                       <span className="bar-track"><span className="bar-fill" style={{ width: `${Math.max(1.5, pct(u.seconds, max))}%` }} /></span>
                       <span className="bar-value">{formatDuration(u.seconds)} <span className="muted">· {u.completed} terminé{u.completed > 1 ? 's' : ''}</span></span>
                     </li>
@@ -211,7 +212,7 @@ export default function Dashboard() {
                 const name = a.display_name || a.username;
                 return (
                   <li key={i}>
-                    <span className="avatar" style={{ '--h': hueOf(a.username) }}>{[...name][0]?.toUpperCase()}</span>
+                    <Avatar user={a} />
                     <div className="grow">
                       <strong>{name}</strong>{' '}
                       <span className="muted">{a.watched ? 'a terminé' : 'regarde'}</span>{' '}
