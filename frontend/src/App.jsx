@@ -3,6 +3,7 @@ import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api, onUnauthorized } from './api.js';
 import Icon from './components/Icon.jsx';
 import UploadTray from './components/UploadTray.jsx';
+import { setManage, useManage } from './manage.js';
 import Login from './pages/Login.jsx';
 import Library from './pages/Library.jsx';
 import Series from './pages/Series.jsx';
@@ -63,15 +64,29 @@ function BootError({ error, onRetry }) {
 
 function Shell({ onLogout, username }) {
   const location = useLocation();
+  const manage = useManage();
+  const [scrolled, setScrolled] = useState(false);
   useEffect(() => { window.scrollTo(0, 0); }, [location.pathname]);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
 
   return (
     <div className="layout">
-      <header className="topbar">
-        <Link to="/" className="brand"><span className="logo" aria-hidden="true"><Icon name="play" size={14} /></span>Animés</Link>
-        <button className="link muted" onClick={onLogout} title={username ? `Connecté : ${username}` : undefined}>
-          <Icon name="logout" size={18} /> <span className="hide-sm">Déconnexion</span>
-        </button>
+      <header className={`topbar${scrolled ? ' scrolled' : ''}`}>
+        <Link to="/" className="brand"><span className="logo" aria-hidden="true"><Icon name="play" size={13} /></span>Animés</Link>
+        <nav className="topnav">
+          <button className={`pill-toggle${manage ? ' on' : ''}`} onClick={() => setManage(!manage)} aria-pressed={manage}
+            title="Afficher les outils pour importer des vidéos et des sous-titres">
+            <Icon name={manage ? 'check' : 'upload'} size={16} /> <span>{manage ? 'Gestion activée' : 'Gérer'}</span>
+          </button>
+          <button className="icon-btn ghost" onClick={onLogout} title={username ? `Déconnexion (${username})` : 'Déconnexion'} aria-label="Déconnexion">
+            <Icon name="logout" size={18} />
+          </button>
+        </nav>
       </header>
       <main className="page">
         <Routes>

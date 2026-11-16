@@ -13,5 +13,13 @@ export function openDatabase(dbPath = process.env.DB_PATH || path.join(here, '..
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(fs.readFileSync(path.join(here, 'schema.sql'), 'utf8'));
+  migrate(db);
   return db;
+}
+
+// Colonnes ajoutees apres la premiere version (CREATE TABLE IF NOT EXISTS ne modifie pas une table existante).
+function migrate(db) {
+  const has = (table, col) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
+  if (!has('series', 'cover_file')) db.exec('ALTER TABLE series ADD COLUMN cover_file TEXT');
+  if (!has('episode', 'thumb_file')) db.exec('ALTER TABLE episode ADD COLUMN thumb_file TEXT');
 }

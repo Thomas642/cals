@@ -33,3 +33,24 @@ test('VTT conserve, formats et contenus invalides refuses', () => {
   assert.throws(() => toWebVtt('rien', 'srt'), /Aucune replique/);
   assert.throws(() => toWebVtt('x', 'sub'), /non pris en charge/);
 });
+
+test('migration : une base de la premiere version recoit les colonnes cover_file et thumb_file', async () => {
+  const { default: Database } = await import('better-sqlite3');
+  const os = await import('node:os');
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { openDatabase } = await import('../src/db.js');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mig-')), 'old.db');
+  const old = new Database(file);
+  old.exec(`CREATE TABLE series (id INTEGER PRIMARY KEY, title TEXT NOT NULL, description TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+    CREATE TABLE episode (id INTEGER PRIMARY KEY, series_id INTEGER NOT NULL, number REAL, title TEXT, original_name TEXT, video_file TEXT,
+      video_mime TEXT, video_size INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'uploading', created_at TEXT NOT NULL DEFAULT (datetime('now')));
+    INSERT INTO series (title) VALUES ('Ancienne');`);
+  old.close();
+  const db = openDatabase(file);
+  const cols = (t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+  assert.ok(cols('series').includes('cover_file'));
+  assert.ok(cols('episode').includes('thumb_file'));
+  assert.equal(db.prepare('SELECT title FROM series').get().title, 'Ancienne');
+  db.close();
+});

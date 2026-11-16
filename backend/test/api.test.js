@@ -122,3 +122,59 @@ test('episodes precedent / suivant', async () => {
   assert.equal(mid.next_id, ids[3]);
   assert.deepEqual((await call('GET', `/series/${s.id}`)).body.episodes.map((e) => e.number), [1, 2, 3]);
 });
+
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(100, 1)]);
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(50, 2)]);
+
+test('miniature d episode, affiche de serie (verification du type par les octets)', async () => {
+  const s = (await call('POST', '/series', { title: 'Images' })).body;
+  assert.equal(s.cover_url, null);
+  const e = (await call('POST', `/series/${s.id}/episodes`, { filename: 'i.mp4', size: 1, number: 1 })).body;
+  const img = (p, buf, type = 'image/jpeg') => call('PUT', p, undefined, { raw: buf, headers: { 'Content-Type': type } });
+
+  assert.equal((await img(`/episodes/${e.id}/thumbnail`, Buffer.from('<svg></svg>'), 'image/svg+xml')).status, 400);
+  const t = await img(`/episodes/${e.id}/thumbnail`, JPEG);
+  assert.equal(t.status, 200);
+  assert.match(t.body.thumb_url, new RegExp(`^/api/media/thumb/${e.id}\\?v=`));
+  const got = await call('GET', t.body.thumb_url.replace(/^\/api/, ''));
+  assert.equal(got.headers.get('content-type'), 'image/jpeg');
+  assert.ok(got.body.equals(JPEG));
+  // Sans affiche importee, la serie prend la miniature du premier episode.
+  assert.equal((await call('GET', `/series/${s.id}`)).body.cover_url, t.body.thumb_url);
+
+  const c = await img(`/series/${s.id}/cover`, PNG, 'image/png');
+  assert.equal(c.status, 200);
+  assert.equal(c.body.has_custom_cover, true);
+  assert.match(c.body.cover_url, new RegExp(`^/api/media/cover/${s.id}\\?v=`));
+  assert.equal((await call('GET', c.body.cover_url.replace(/^\/api/, ''))).headers.get('content-type'), 'image/png');
+  assert.equal((await img(`/series/${s.id}/cover`, Buffer.alloc(9 * 1024 * 1024, 0xff))).status, 413);
+  const removed = await call('DELETE', `/series/${s.id}/cover`);
+  assert.equal(removed.body.cover_url, t.body.thumb_url);
+
+  assert.equal((await call('DELETE', `/series/${s.id}`)).status, 204);
+  assert.deepEqual(fs.readdirSync(path.join(mediaDir, 'images')), []);
+});
+
+test('envoi : un morceau fige est coupe par le suivant, qui reprend a la bonne position', async () => {
+  const s = (await call('POST', '/series', { title: 'Fige' })).body;
+  const e = (await call('POST', `/series/${s.id}/episodes`, { filename: 'f.mp4', size: 10, number: 1 })).body;
+  // Morceau annonce a 10 octets mais seulement 4 envoyes, connexion laissee ouverte.
+  const http = await import('node:http');
+  const stalled = http.request(`${base}/episodes/${e.id}/upload?offset=0`, {
+    method: 'PUT', headers: { Cookie: cookie, 'Content-Type': 'application/octet-stream', 'Content-Length': 10 },
+  });
+  stalled.on('error', () => {});
+  stalled.write(Buffer.from('abcd'));
+  await new Promise((r) => { setTimeout(r, 150); });
+  const put = (offset, chunk) => call('PUT', `/episodes/${e.id}/upload?offset=${offset}`, undefined,
+    { raw: chunk, headers: { 'Content-Type': 'application/octet-stream' } });
+  const first = await put(0, Buffer.from('abcdefghij'));
+  assert.equal(first.status, 409);
+  assert.equal(first.body.retry, true);
+  await new Promise((r) => { setTimeout(r, 100); });
+  const pos = (await call('GET', `/episodes/${e.id}`)).body.received;
+  assert.equal(pos, 4);
+  const done = await put(pos, Buffer.from('efghij'));
+  assert.deepEqual(done.body, { received: 10, status: 'ready' });
+  assert.equal((await call('GET', `/media/video/${e.id}`)).body.toString(), 'abcdefghij');
+});

@@ -24,8 +24,8 @@ export default function UploadTray() {
             <li key={j.episodeId} className={`job ${j.state}`}>
               <div className="job-line">
                 <Link to={`/serie/${j.seriesId}`} className="job-name" title={j.name}>{j.name}</Link>
-                {j.state === 'error' && <button className="icon-btn subtle-ok" onClick={() => retryUpload(j.episodeId)} aria-label="Réessayer"><Icon name="refresh" size={16} /></button>}
-                {j.state !== 'done' && <button className="icon-btn subtle" onClick={() => cancelUpload(j.episodeId)} aria-label="Annuler l'envoi"><Icon name="close" size={16} /></button>}
+                {j.state === 'error' && <button className="icon-btn ghost" onClick={() => retryUpload(j.episodeId)} aria-label="Réessayer"><Icon name="refresh" size={16} /></button>}
+                {j.state !== 'done' && <button className="icon-btn ghost" onClick={() => cancelUpload(j.episodeId)} aria-label="Annuler l'envoi"><Icon name="close" size={16} /></button>}
               </div>
               <div className="progress" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${pct}%` }} /></div>
               <div className="job-meta">
