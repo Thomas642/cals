@@ -2,35 +2,35 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useApi } from '../hooks.js';
 import { episodeLabel } from '../files.js';
+import { markWatched, progressOf, recordProgress } from '../progress.js';
 import Icon from '../components/Icon.jsx';
-import Skeleton from '../components/Skeleton.jsx';
-
-// Position de lecture memorisee dans ce navigateur (reprise la ou on s'etait arrete).
-const posKey = (id) => `anime:pos:${id}`;
-const readPos = (id) => { try { return Number(localStorage.getItem(posKey(id))) || 0; } catch { return 0; } };
-const writePos = (id, t) => { try { if (t > 0) localStorage.setItem(posKey(id), String(Math.floor(t))); else localStorage.removeItem(posKey(id)); } catch { /* stockage indisponible */ } };
+import Thumb from '../components/Thumb.jsx';
 
 export default function Watch() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { data: ep, error } = useApi(`/episodes/${id}`);
+  const { data: series } = useApi(ep ? `/series/${ep.series.id}` : null);
   const video = useRef(null);
   const lastSaved = useRef(0);
   const [playError, setPlayError] = useState(null);
   const [ended, setEnded] = useState(false);
 
-  useEffect(() => { setPlayError(null); setEnded(false); }, [id]);
+  useEffect(() => { setPlayError(null); setEnded(false); lastSaved.current = 0; }, [id]);
 
   if (error) return <><Link to="/" className="back"><Icon name="chevronLeft" size={18} /> Bibliothèque</Link><p className="alert">{error.message}</p></>;
-  if (!ep) return <Skeleton lines={6} />;
+  if (!ep) return <div className="watch"><div className="player sk-block" style={{ aspectRatio: '16 / 9' }} /></div>;
   if (ep.status !== 'ready') {
     return <><Link to={`/serie/${ep.series.id}`} className="back"><Icon name="chevronLeft" size={18} /> {ep.series.title}</Link><p className="alert">La vidéo de cet épisode n'est pas encore entièrement envoyée.</p></>;
   }
 
+  const info = { seriesId: ep.series.id, seriesTitle: ep.series.title, label: episodeLabel({ number: ep.number }), thumb: ep.thumb_url, cover: ep.series.cover_url };
+  const nextEp = series?.episodes.find((e) => e.id === ep.next_id);
+
   function onLoaded() {
-    const pos = readPos(ep.id);
     const v = video.current;
-    if (v && pos > 5 && pos < v.duration - 10) v.currentTime = pos;
+    const p = progressOf(ep.id);
+    if (v && p && !p.watched && p.pos > 5 && p.pos < v.duration - 10) v.currentTime = p.pos;
     // Active la premiere piste francaise (sinon la premiere piste).
     if (v?.textTracks?.length) {
       const tracks = [...v.textTracks];
@@ -39,11 +39,16 @@ export default function Watch() {
     }
   }
 
+  function save() {
+    const v = video.current;
+    if (v && v.duration) recordProgress(ep.id, v.currentTime, v.duration, info);
+  }
+
   function onTime() {
     const v = video.current;
     if (!v || Math.abs(v.currentTime - lastSaved.current) < 5) return;
     lastSaved.current = v.currentTime;
-    writePos(ep.id, v.duration && v.currentTime > v.duration - 30 ? 0 : v.currentTime);
+    save();
   }
 
   function onError() {
@@ -64,32 +69,63 @@ export default function Watch() {
           autoPlay
           playsInline
           preload="metadata"
+          poster={ep.thumb_url || undefined}
           src={`/api/media/video/${ep.id}`}
           onLoadedMetadata={onLoaded}
           onTimeUpdate={onTime}
-          onPause={() => video.current && writePos(ep.id, video.current.currentTime)}
-          onEnded={() => { writePos(ep.id, 0); setEnded(true); }}
+          onPause={save}
+          onEnded={() => { markWatched(ep.id, info); setEnded(true); }}
           onError={onError}
         >
           {ep.subtitles.map((s) => (
             <track key={s.id} kind="subtitles" src={`/api/media/subtitle/${s.id}`} srcLang={s.lang} label={s.label} />
           ))}
         </video>
+        {ended && nextEp && (
+          <button className="next-overlay" onClick={() => navigate(`/regarder/${nextEp.id}`)}>
+            <span className="eyebrow">Épisode suivant</span>
+            <strong>{episodeLabel(nextEp)}</strong>
+            <span className="button primary"><Icon name="play" size={16} /> Lecture</span>
+          </button>
+        )}
       </div>
       {playError && <p className="alert">{playError}</p>}
 
       <div className="watch-bar">
         <div>
+          <span className="eyebrow">{ep.series.title}</span>
           <h1>{episodeLabel(ep)}</h1>
-          <p className="muted small">
-            {ep.subtitles.length ? `Sous-titres : ${ep.subtitles.map((s) => s.label).join(', ')}` : 'Pas de sous-titres pour cet épisode'}
-          </p>
+          <div className="episode-meta">
+            {ep.subtitles.length
+              ? ep.subtitles.map((s) => <span key={s.id} className="tag"><Icon name="captions" size={13} /> {s.label}</span>)
+              : <span className="tag warn">Sans sous-titres</span>}
+          </div>
         </div>
         <div className="row-actions">
-          {ep.prev_id && <button onClick={() => navigate(`/regarder/${ep.prev_id}`)}><Icon name="chevronLeft" size={18} /> Précédent</button>}
-          {ep.next_id && <button className={ended ? 'primary' : ''} onClick={() => navigate(`/regarder/${ep.next_id}`)}>Suivant <Icon name="chevronRight" size={18} /></button>}
+          {ep.prev_id && <button className="ghost-btn" onClick={() => navigate(`/regarder/${ep.prev_id}`)}><Icon name="chevronLeft" size={18} /> Précédent</button>}
+          {ep.next_id && <button className={ended ? 'primary' : 'ghost-btn'} onClick={() => navigate(`/regarder/${ep.next_id}`)}>Suivant <Icon name="chevronRight" size={18} /></button>}
         </div>
       </div>
+
+      {series && series.episodes.filter((e) => e.status === 'ready').length > 1 && (
+        <section className="shelf">
+          <h2>Épisodes</h2>
+          <ul className="row-scroll">
+            {series.episodes.filter((e) => e.status === 'ready').map((e) => {
+              const p = progressOf(e.id);
+              return (
+                <li key={e.id}>
+                  <Link to={`/regarder/${e.id}`} className={`continue-card${e.id === ep.id ? ' current' : ''}`}>
+                    <Thumb src={e.thumb_url} seed={ep.series.title} number={e.number} progress={p} watched={p?.watched} playable={e.id !== ep.id} />
+                    <strong>{episodeLabel(e)}</strong>
+                    {e.id === ep.id && <span className="muted small">En cours</span>}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

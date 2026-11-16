@@ -2,7 +2,8 @@
 
 Site web privé pour regarder en famille des épisodes d'anime avec sous-titres français.
 On crée une série, on y importe les vidéos des épisodes, puis les fichiers de sous-titres.
-Le lecteur affiche les sous-titres, mémorise la position de lecture (par navigateur) et propose l'épisode suivant.
+Le lecteur affiche les sous-titres, mémorise la position de lecture (par navigateur), marque les épisodes vus,
+propose l'épisode suivant, et l'accueil affiche une rangée « Continuer à regarder ».
 
 Ce dépôt contenait auparavant l'application nutrition « Cals ». Le code a été remplacé ; l'infrastructure
 (Docker Compose, nginx, tunnel Cloudflare, écran de connexion, scripts de déploiement) est conservée.
@@ -35,7 +36,10 @@ deploy/                   installation, mise à jour, sauvegarde, bloc nginx hô
 
 ## Utilisation
 
-1. **Bibliothèque > Nouvelle série** : donner un titre.
+Les outils d'import et d'édition n'apparaissent qu'avec le bouton **Gérer** (en haut à droite) ; sans lui, le site
+reste en mode visionnage, sans boutons de suppression. Le choix est mémorisé dans chaque navigateur.
+
+1. **Gérer > Nouvelle série** : donner un titre.
 2. Sur la page de la série, **glisser les vidéos** dans la zone d'import (ou cliquer pour les choisir).
    Un épisode est créé par fichier et l'envoi démarre. On peut changer de page pendant l'envoi
    (panneau en bas à droite) ; fermer l'onglet l'interrompt.
@@ -46,6 +50,11 @@ deploy/                   installation, mise à jour, sauvegarde, bloc nginx hô
 `Titre S01E03.mp4`, `Titre 第3話.mp4`, `Titre_03_VOSTFR.mkv` → épisode 3. Un sous-titre `Titre - 03.srt` est
 rattaché à l'épisode 3. Si aucun numéro n'est trouvé, la vidéo prend le numéro suivant ; le numéro et le titre
 se modifient avec le crayon.
+
+**Affiche et miniatures** : chaque épisode reçoit une miniature, capturée par le navigateur à 25 % de la vidéo
+au moment de l'import (ou à la première visite de la série pour les épisodes déjà en ligne). Si le navigateur ne
+sait pas décoder la vidéo, l'épisode garde une vignette colorée. L'affiche de la série est l'image choisie avec
+« Choisir une affiche » (JPEG, PNG ou WebP, 8 Mo maximum), sinon la miniature du premier épisode.
 
 **Langue de la piste** : `.fr.`, `.en.`/`.eng.`, `.ja.`/`.jpn.` dans le nom du fichier ; français par défaut.
 
@@ -60,9 +69,12 @@ Les sous-titres intégrés à l'intérieur d'un fichier MKV ne sont pas lus : il
 
 ### Envoi des vidéos
 
-Les vidéos partent par morceaux de 16 Mo (`PUT /api/episodes/:id/upload?offset=`). Après une coupure réseau,
-l'envoi reprend tout seul à partir du dernier octet reçu (6 essais). Si l'onglet a été fermé, l'épisode
-affiche « Envoi incomplet » avec un bouton pour reprendre en sélectionnant le même fichier.
+Les vidéos partent par morceaux (`PUT /api/episodes/:id/upload?offset=`) de 2 à 16 Mo : la taille s'adapte au
+débit mesuré pour qu'un morceau dure une vingtaine de secondes. Après une coupure réseau, l'envoi reprend tout
+seul à partir du dernier octet reçu (10 essais). Un morceau sans aucune progression pendant 45 s est relancé ;
+côté serveur, un morceau sans octet reçu pendant 60 s est fermé, et un nouveau morceau ferme le précédent resté
+ouvert. Si l'onglet a été fermé, l'épisode affiche « Envoi incomplet » : réimporter le même fichier (même nom,
+même taille) dans la zone d'import, ou cliquer « Reprendre avec le même fichier », reprend l'envoi.
 Si un proxy refuse les morceaux de 16 Mo (réponse 413), le site passe à des morceaux de 2 Mo, plus lents.
 
 **Erreur 429 « Trop de requêtes »** : ce code ne vient pas de l'API (qui ne le renvoie qu'après des échecs de
@@ -198,10 +210,13 @@ Toutes les routes sauf `/api/health` et `/api/auth/*` exigent une session.
 | POST | /api/series/:id/episodes | Annonce d'une vidéo `{ filename, size, number?, title? }` |
 | GET / PUT / DELETE | /api/episodes/:id | Détail (avec épisodes précédent/suivant) / numéro et titre / suppression |
 | PUT | /api/episodes/:id/upload?offset=N | Morceau de vidéo (corps brut, 64 Mo max). 409 + `received` si la position est fausse |
+| PUT | /api/episodes/:id/thumbnail | Miniature (corps brut JPEG/PNG/WebP, 2 Mo max) |
+| PUT / DELETE | /api/series/:id/cover | Affiche de la série (corps brut, 8 Mo max) / retour à la miniature |
 | POST | /api/episodes/:id/subtitles | `{ filename, content, label?, lang? }`, converti en WebVTT |
 | DELETE | /api/subtitles/:id | Suppression d'une piste |
 | GET | /api/media/video/:id | Lecture de la vidéo (requêtes partielles `Range`) |
 | GET | /api/media/subtitle/:id | Piste WebVTT |
+| GET | /api/media/thumb/:id, /api/media/cover/:id | Miniature, affiche |
 
 ## Suite prévue
 

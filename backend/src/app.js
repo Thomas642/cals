@@ -17,6 +17,18 @@ export const VIDEO_TYPES = {
 };
 export const MAX_CHUNK_BYTES = 64 * 1024 * 1024;   // taille maximale d'un morceau envoye
 const DISK_MARGIN_BYTES = 512 * 1024 * 1024;        // espace laisse libre sur le disque
+const UPLOAD_IDLE_MS = 60 * 1000;                   // morceau abandonne si aucun octet recu pendant ce delai
+const MAX_THUMB_BYTES = 2 * 1024 * 1024;
+const MAX_COVER_BYTES = 8 * 1024 * 1024;
+
+// Type d'image reconnu par ses premiers octets (le Content-Type annonce n'est pas fiable).
+function imageType(buf) {
+  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return { ext: 'jpg', mime: 'image/jpeg' };
+  if (buf.length > 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return { ext: 'png', mime: 'image/png' };
+  if (buf.length > 12 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') return { ext: 'webp', mime: 'image/webp' };
+  return null;
+}
+const IMAGE_MIME = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
 
 const httpError = (status, message, extra) => Object.assign(new Error(message), { status, extra });
 const notFound = (what) => httpError(404, `${what} introuvable`);
@@ -52,10 +64,11 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
   maxVideoBytes = (Number(process.env.MAX_VIDEO_GB) || 20) * 1024 ** 3 } = {}) {
   fs.mkdirSync(path.join(mediaDir, 'videos'), { recursive: true });
   fs.mkdirSync(path.join(mediaDir, 'subtitles'), { recursive: true });
+  fs.mkdirSync(path.join(mediaDir, 'images'), { recursive: true });
   const abs = (rel) => path.join(mediaDir, rel);
   const removeFile = (rel) => { if (rel) fs.rmSync(abs(rel), { force: true }); };
   const fileSize = (p) => { try { return fs.statSync(p).size; } catch { return 0; } };
-  const uploading = new Set(); // episodes dont un morceau est en cours de reception
+  const uploading = new Map(); // episode -> requete dont un morceau est en cours de reception
 
   function freeBytes() {
     try {
@@ -75,13 +88,45 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     return {
       id: e.id, series_id: e.series_id, number: e.number, title: e.title, original_name: e.original_name,
       video_mime: e.video_mime, video_size: e.video_size, status: e.status, received, created_at: e.created_at,
+      thumb_url: e.thumb_file ? `/api/media/thumb/${e.id}?v=${path.basename(e.thumb_file, path.extname(e.thumb_file)).slice(0, 8)}` : null,
       subtitles: subtitlesOf(e.id),
     };
   }
 
   const episodesOf = (sid) => db.prepare('SELECT * FROM episode WHERE series_id = ? ORDER BY number IS NULL, number, id').all(sid);
 
+  // Affiche de la serie : image importee, sinon miniature du premier episode qui en a une.
+  function coverUrl(s) {
+    if (s.cover_file) return `/api/media/cover/${s.id}?v=${path.basename(s.cover_file, path.extname(s.cover_file)).slice(0, 8)}`;
+    const e = db.prepare('SELECT id, thumb_file FROM episode WHERE series_id = ? AND thumb_file IS NOT NULL ORDER BY number IS NULL, number, id LIMIT 1').get(s.id);
+    return e ? `/api/media/thumb/${e.id}?v=${path.basename(e.thumb_file, path.extname(e.thumb_file)).slice(0, 8)}` : null;
+  }
+  const seriesView = (s) => ({ ...s, cover_file: undefined, has_custom_cover: !!s.cover_file, cover_url: coverUrl(s) });
+
+  /** Lit un corps binaire (image) avec une taille maximale. */
+  async function readBody(req, max) {
+    const len = Number(req.headers['content-length']);
+    if (Number.isInteger(len) && len > max) throw httpError(413, `Image trop volumineuse (${Math.round(max / 1024 / 1024)} Mo maximum)`);
+    const chunks = [];
+    let total = 0;
+    for await (const c of req) {
+      total += c.length;
+      if (total > max) throw httpError(413, `Image trop volumineuse (${Math.round(max / 1024 / 1024)} Mo maximum)`);
+      chunks.push(c);
+    }
+    return Buffer.concat(chunks);
+  }
+
+  function saveImage(buf) {
+    const t = imageType(buf);
+    if (!t) throw httpError(400, 'Image non reconnue (JPEG, PNG ou WebP attendu)');
+    const file = `images/${crypto.randomUUID()}.${t.ext}`;
+    fs.writeFileSync(abs(file), buf);
+    return file;
+  }
+
   function deleteEpisodeFiles(e) {
+    removeFile(e.thumb_file);
     removeFile(e.video_file);
     removeFile(e.video_file && `${e.video_file}.part`);
     for (const s of db.prepare('SELECT file FROM subtitle WHERE episode_id = ?').all(e.id)) removeFile(s.file);
@@ -115,20 +160,20 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     res.json(db.prepare(`SELECT s.*,
         (SELECT COUNT(*) FROM episode e WHERE e.series_id = s.id AND e.status = 'ready') AS episode_count,
         (SELECT COUNT(DISTINCT e.id) FROM episode e JOIN subtitle t ON t.episode_id = e.id WHERE e.series_id = s.id) AS subtitled_count
-      FROM series s ORDER BY s.title COLLATE NOCASE`).all());
+      FROM series s ORDER BY s.title COLLATE NOCASE`).all().map(seriesView));
   });
 
   r.post('/series', (req, res) => {
     const title = text(req.body?.title, { field: 'Titre', max: 200, required: true });
     const description = text(req.body?.description, { field: 'Description', max: 4000 });
     const info = db.prepare('INSERT INTO series (title, description) VALUES (?, ?)').run(title, description);
-    res.status(201).json(getSeries(info.lastInsertRowid));
+    res.status(201).json(seriesView(getSeries(info.lastInsertRowid)));
   });
 
   r.get('/series/:id', (req, res) => {
     const s = getSeries(id(req.params.id));
     if (!s) throw notFound('Serie');
-    res.json({ ...s, episodes: episodesOf(s.id).map(episodeView) });
+    res.json({ ...seriesView(s), episodes: episodesOf(s.id).map(episodeView) });
   });
 
   r.put('/series/:id', (req, res) => {
@@ -137,7 +182,25 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     const title = text(req.body?.title, { field: 'Titre', max: 200, required: true });
     const description = text(req.body?.description, { field: 'Description', max: 4000 });
     db.prepare('UPDATE series SET title = ?, description = ? WHERE id = ?').run(title, description, sid);
-    res.json(getSeries(sid));
+    res.json(seriesView(getSeries(sid)));
+  });
+
+  // Affiche importee (corps brut : image JPEG, PNG ou WebP).
+  r.put('/series/:id/cover', async (req, res) => {
+    const s = getSeries(id(req.params.id));
+    if (!s) throw notFound('Serie');
+    const file = saveImage(await readBody(req, MAX_COVER_BYTES));
+    removeFile(s.cover_file);
+    db.prepare('UPDATE series SET cover_file = ? WHERE id = ?').run(file, s.id);
+    res.json(seriesView(getSeries(s.id)));
+  });
+
+  r.delete('/series/:id/cover', (req, res) => {
+    const s = getSeries(id(req.params.id));
+    if (!s) throw notFound('Serie');
+    removeFile(s.cover_file);
+    db.prepare('UPDATE series SET cover_file = NULL WHERE id = ?').run(s.id);
+    res.json(seriesView(getSeries(s.id)));
   });
 
   r.delete('/series/:id', (req, res) => {
@@ -146,6 +209,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     const eps = episodesOf(sid);
     if (eps.some((e) => uploading.has(e.id))) throw httpError(409, 'Un envoi est en cours pour cette serie');
     eps.forEach(deleteEpisodeFiles);
+    removeFile(getSeries(sid).cover_file);
     db.prepare('DELETE FROM series WHERE id = ?').run(sid);
     res.status(204).end();
   });
@@ -183,7 +247,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     const i = ready.findIndex((x) => x.id === e.id);
     res.json({
       ...episodeView(e),
-      series: { id: s.id, title: s.title },
+      series: { id: s.id, title: s.title, cover_url: coverUrl(s) },
       prev_id: i > 0 ? ready[i - 1].id : null,
       next_id: i >= 0 && i < ready.length - 1 ? ready[i + 1].id : null,
     });
@@ -206,12 +270,26 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     res.status(204).end();
   });
 
+  // Miniature capturee par le navigateur a partir de la video (JPEG, PNG ou WebP).
+  r.put('/episodes/:id/thumbnail', async (req, res) => {
+    const e = getEpisode(id(req.params.id));
+    if (!e) throw notFound('Episode');
+    const file = saveImage(await readBody(req, MAX_THUMB_BYTES));
+    removeFile(e.thumb_file);
+    db.prepare('UPDATE episode SET thumb_file = ? WHERE id = ?').run(file, e.id);
+    res.json(episodeView(getEpisode(e.id)));
+  });
+
   // Reception d'un morceau de video. offset = octets deja recus (reprise possible apres coupure).
   r.put('/episodes/:id/upload', async (req, res) => {
     const e = getEpisode(id(req.params.id));
     if (!e) throw notFound('Episode');
     if (e.status === 'ready') throw httpError(409, 'La video de cet episode est deja complete');
-    if (uploading.has(e.id)) throw httpError(409, 'Un envoi est deja en cours pour cet episode');
+    if (uploading.has(e.id)) {
+      // Un morceau precedent est encore ouvert (connexion figee) : on le coupe, le client reprendra.
+      uploading.get(e.id).destroy();
+      throw httpError(409, 'Envoi precedent interrompu, reprise', { received: fileSize(`${abs(e.video_file)}.part`), retry: true });
+    }
     const part = `${abs(e.video_file)}.part`;
     const received = fileSize(part);
     const offset = Number(req.query.offset);
@@ -223,7 +301,9 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     if (length > MAX_CHUNK_BYTES) throw httpError(413, 'Morceau trop volumineux');
     if (offset + length > e.video_size) throw httpError(400, 'Le morceau depasse la taille annoncee du fichier');
 
-    uploading.add(e.id);
+    uploading.set(e.id, req);
+    // Aucun octet recu pendant UPLOAD_IDLE_MS : la connexion est consideree comme perdue.
+    req.setTimeout(UPLOAD_IDLE_MS, () => req.destroy());
     try {
       await pipeline(req, fs.createWriteStream(part, { flags: 'a' }));
     } catch {
@@ -231,7 +311,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
       if (!res.headersSent && !req.destroyed) throw httpError(400, 'Envoi interrompu', { received: fileSize(part) });
       return;
     } finally {
-      uploading.delete(e.id);
+      if (uploading.get(e.id) === req) uploading.delete(e.id);
     }
     const now = fileSize(part);
     if (now === e.video_size) {
@@ -279,6 +359,25 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     res.sendFile(abs(e.video_file), { headers: { 'Cache-Control': 'private, max-age=3600' } }, (err) => {
       if (err && !res.headersSent) next(err);
     });
+  });
+
+  function sendImage(res, next, rel) {
+    res.type(IMAGE_MIME[path.extname(rel).slice(1)] || 'application/octet-stream');
+    res.sendFile(abs(rel), { headers: { 'Cache-Control': 'private, max-age=31536000, immutable' } }, (err) => {
+      if (err && !res.headersSent) next(err);
+    });
+  }
+
+  r.get('/media/thumb/:id', (req, res, next) => {
+    const e = getEpisode(id(req.params.id));
+    if (!e?.thumb_file) throw notFound('Miniature');
+    sendImage(res, next, e.thumb_file);
+  });
+
+  r.get('/media/cover/:id', (req, res, next) => {
+    const s = getSeries(id(req.params.id));
+    if (!s?.cover_file) throw notFound('Affiche');
+    sendImage(res, next, s.cover_file);
   });
 
   r.get('/media/subtitle/:id', (req, res, next) => {

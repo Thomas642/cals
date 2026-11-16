@@ -59,3 +59,10 @@ export const episodeLabel = (e) => {
   const num = e.number !== null && e.number !== undefined ? `Épisode ${String(e.number).replace('.', ',')}` : 'Épisode';
   return e.title ? `${num} · ${e.title}` : num;
 };
+
+// Teinte stable par titre (vignettes sans image).
+export function hueOf(title) {
+  let h = 0;
+  for (const c of String(title)) h = (h * 31 + c.codePointAt(0)) % 360;
+  return h;
+}
