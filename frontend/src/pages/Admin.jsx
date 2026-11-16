@@ -56,6 +56,7 @@ export default function Admin({ me }) {
       )}
 
       {error && <p className="alert">{error.message}</p>}
+      {!users && !error && <ul className="user-list" aria-busy="true">{[0, 1].map((i) => <li key={i} className="user-row"><div className="sk-line w50" /><div className="sk-line w30" /></li>)}</ul>}
       <ul className="user-list">
         {users?.map((u) => <UserRow key={u.id} user={u} me={me} />)}
       </ul>

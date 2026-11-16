@@ -389,6 +389,22 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
         ...epLabel(e), original_name: e.original_name, received: fileSize(`${abs(e.video_file)}.part`), size: e.video_size, created_at: e.created_at,
       })),
       users: { ...users, admins: users.admins || 0, disabled: users.disabled || 0 },
+      stats: {
+        // Temps reellement regarde (envoye par le lecteur), episodes termines, par personne.
+        by_user: db.prepare(`SELECT u.id, u.username, u.display_name,
+            COALESCE(SUM(p.seconds_watched), 0) AS seconds, COALESCE(SUM(p.completions), 0) AS completed,
+            COUNT(p.episode_id) AS started, MAX(p.updated_at) AS last_watch
+          FROM app_user u LEFT JOIN watch_progress p ON p.user_id = u.id
+          GROUP BY u.id ORDER BY seconds DESC, u.username COLLATE NOCASE`).all(),
+        top_episodes: db.prepare(`SELECT e.id, e.number, e.season, e.series_id, s.title AS series_title,
+            COUNT(DISTINCT CASE WHEN p.completions > 0 OR p.seconds_watched >= 60 THEN p.user_id END) AS viewers,
+            COALESCE(SUM(p.completions), 0) AS completions, COALESCE(SUM(p.seconds_watched), 0) AS seconds
+          FROM watch_progress p JOIN episode e ON e.id = p.episode_id JOIN series s ON s.id = e.series_id
+          GROUP BY e.id HAVING seconds > 0 OR completions > 0 ORDER BY viewers DESC, seconds DESC LIMIT 8`).all(),
+        by_series: db.prepare(`SELECT s.id, s.title, COALESCE(SUM(p.seconds_watched), 0) AS seconds, COUNT(DISTINCT p.user_id) AS viewers
+          FROM series s JOIN episode e ON e.series_id = s.id JOIN watch_progress p ON p.episode_id = e.id
+          GROUP BY s.id HAVING seconds > 0 ORDER BY seconds DESC LIMIT 8`).all(),
+      },
       activity,
       server: {
         uptime_seconds: Math.round(os.uptime()),

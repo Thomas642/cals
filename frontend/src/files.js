@@ -14,10 +14,12 @@ export const isSubtitle = (f) => SUBTITLE_EXT.includes(extOf(f.name));
  */
 export function guessEpisodeNumber(name) {
   const base = name.replace(/\.[^.]+$/, '').replace(/[_.]+/g, ' ');
-  const explicit = base.match(/(?:\bS\d{1,2}\s*E|\bEP?\.?\s*|\bEpisode\s*|第\s*)(\d{1,4})(?:\.\d)?/i);
+  const explicit = base.match(/(?:\bS\d{1,2}\s*E|\bEP?\.?\s*|\bEpisode\s*)(\d{1,4})(?:\.\d)?/i)
+    || base.match(/第\s*(\d{1,4})\s*[話话集]/);
   if (explicit) return Number(explicit[1]);
   const cleaned = base
     .replace(/\[[^\]]*\]|\([^)]*\)|\{[^}]*\}/g, ' ')                 // [Groupe], (1080p), {...}
+    .replace(/第\s*\d{1,2}\s*期|\b(?:saison|season|arc|part|partie|cour)\s*-?\s*\d{1,2}\b/gi, ' ') // saison / arc
     .replace(/\b\d{3,4}p\b|\b[xh]\.?26[45]\b|\b10\s?bits?\b|\b(19|20)\d{2}\b|\bS\d{1,2}\b/gi, ' ');
   const dash = cleaned.match(/\s-\s*(\d{1,4})(?:v\d)?\b/);
   if (dash) return Number(dash[1]);
@@ -76,3 +78,27 @@ export function hueOf(title) {
   for (const c of String(title)) h = (h * 31 + c.codePointAt(0)) % 360;
   return h;
 }
+
+/**
+ * Devine la saison (ou l'arc) depuis un nom de fichier : "S02E05", "Saison 2", "Season 2", "ARC 02", "Part 2",
+ * "第2期". Retourne null si rien de fiable.
+ */
+export function guessSeason(name) {
+  const base = name.replace(/\.[^.]+$/, '').replace(/[_.]+/g, ' ');
+  const m = base.match(/\bS(\d{1,2})\s*E\d/i)
+    || base.match(/\b(?:saison|season|arc|part|partie|cour)\s*-?\s*(\d{1,2})\b/i)
+    || base.match(/第\s*(\d{1,2})\s*期/);
+  return m ? Number(m[1]) : null;
+}
+
+export const seasonName = (series, season) => series?.season_names?.[season] || `Saison ${season}`;
+
+// Erreur ffmpeg brute -> phrase comprehensible (le detail reste dans l'infobulle).
+export function friendlyError(err) {
+  const e = String(err || '');
+  if (/Invalid data|moov atom not found|could not find codec|Invalid argument/i.test(e)) return 'Fichier vidéo endommagé ou incomplet : ffmpeg ne peut pas le lire. Réimporte la vidéo.';
+  if (/Espace disque/i.test(e)) return e;
+  if (/No such file/i.test(e)) return 'Fichier vidéo introuvable sur le serveur.';
+  return e.length > 160 ? `${e.slice(0, 160)}…` : e;
+}
+

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { useApi } from '../hooks.js';
-import { formatBytes } from '../files.js';
+import { episodeLabel, formatBytes } from '../files.js';
 import { recentBySeries, useProgress } from '../progress.js';
 import { setManage, useManage } from '../manage.js';
 import Icon from '../components/Icon.jsx';
@@ -19,6 +19,7 @@ function greeting() {
 export default function Library({ user }) {
   const isAdmin = user.role === 'admin';
   const { data: series, error } = useApi('/series');
+  const { data: recentlyAdded } = useApi('/recent');
   const { data: storage } = useApi(isAdmin ? '/storage' : null);
   const manage = useManage() && isAdmin;
   useProgress(); // re-rendu quand la progression change
@@ -52,6 +53,17 @@ export default function Library({ user }) {
 
       {adding && <NewSeries onClose={() => setAdding(false)} />}
 
+      {series.some((s) => s.in_list) && (
+        <section className="shelf">
+          <div className="shelf-head"><h2>Ma liste</h2></div>
+          <ul className="row-scroll posters">
+            {series.filter((s) => s.in_list).map((s) => (
+              <li key={s.id}><PosterCard s={s} /></li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {recent.length > 0 && (
         <section className="shelf">
           <div className="shelf-head"><h2>Continuer à regarder</h2></div>
@@ -69,6 +81,26 @@ export default function Library({ user }) {
         </section>
       )}
 
+      {recentlyAdded?.length > 0 && (
+        <section className="shelf">
+          <div className="shelf-head"><h2>Récemment ajoutés</h2></div>
+          <ul className="row-scroll">
+            {recentlyAdded.map((e) => (
+              <li key={e.id}>
+                <Link to={`/regarder/${e.id}`} className="continue-card">
+                  <div className="thumb-wrap">
+                    <Thumb src={e.thumb_url} seed={e.series_title} number={e.number} storyboard={e.storyboard} />
+                    {e.is_new && <span className="badge-new on-thumb">Nouveau</span>}
+                  </div>
+                  <strong>{e.series_title}</strong>
+                  <span className="muted small">{episodeLabel(e)}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section className="shelf">
         <div className="shelf-head">
           <h2>Toutes les séries <span className="count">{series.length}</span></h2>
@@ -76,19 +108,7 @@ export default function Library({ user }) {
         </div>
         <ul className="poster-grid">
           {series.map((s, i) => (
-            <li key={s.id} style={{ '--i': i }}>
-              <Link to={`/serie/${s.id}`} className="poster-card">
-                <div className="poster-wrap">
-                  <Poster series={s} />
-                  <span className="poster-hover"><span className="poster-play"><Icon name="play" size={22} /></span></span>
-                </div>
-                <strong>{s.title}</strong>
-                <span className="muted small">
-                  {s.episode_count} épisode{s.episode_count > 1 ? 's' : ''}
-                  {s.episode_count > 0 && s.subtitled_count > 0 && ` · ${s.subtitled_count === s.episode_count ? 'VOSTFR' : `${s.subtitled_count} sous-titré${s.subtitled_count > 1 ? 's' : ''}`}`}
-                </span>
-              </Link>
-            </li>
+            <li key={s.id} style={{ '--i': i }}><PosterCard s={s} /></li>
           ))}
         </ul>
       </section>
@@ -99,6 +119,25 @@ export default function Library({ user }) {
         </p>
       )}
     </>
+  );
+}
+
+function PosterCard({ s }) {
+  return (
+    <Link to={`/serie/${s.id}`} className="poster-card">
+      <div className="poster-wrap">
+        <Poster series={s} />
+        <span className="poster-hover"><span className="poster-play"><Icon name="play" size={22} /></span></span>
+        {s.new_count > 0 && <span className="badge-new on-poster">{s.new_count} nouveau{s.new_count > 1 ? 'x' : ''}</span>}
+        {s.in_list && <span className="list-flag" title="Dans ma liste"><Icon name="bookmarkOn" size={14} /></span>}
+      </div>
+      <strong>{s.title}</strong>
+      <span className="muted small">
+        {[s.year, `${s.episode_count} épisode${s.episode_count > 1 ? 's' : ''}`,
+          s.episode_count > 0 && s.subtitled_count > 0 ? (s.subtitled_count === s.episode_count ? 'VOSTFR' : `${s.subtitled_count} sous-titré${s.subtitled_count > 1 ? 's' : ''}`) : null]
+          .filter(Boolean).join(' · ')}
+      </span>
+    </Link>
   );
 }
 

@@ -659,3 +659,46 @@ kbd { display: inline-block; min-width: 1.7em; text-align: center; font: 600 0.7
 /* Squelettes */
 .sk-line { height: 0.95rem; border-radius: 6px; margin: 0.8rem 0; background: linear-gradient(90deg, var(--surface) 25%, var(--surface-2) 50%, var(--surface) 75%); background-size: 200% 100%; animation: shimmer 1.3s ease-in-out infinite; }
 .sk-line.w30 { width: 30%; } .sk-line.w50 { width: 50%; } .sk-line.w70 { width: 70%; }
+
+/* ─── Bibliotheque : saisons, ma liste, nouveautes, ordre ───────────────── */
+.episodes-head { flex-wrap: wrap; }
+.season-tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; margin: 0 0 1rem; }
+.season-tabs [role="tab"] { border-radius: 999px; padding: 0.5rem 1rem; background: var(--surface); gap: 0.5rem; }
+.season-tabs [role="tab"].sel { background: var(--text); color: var(--bg); border-color: var(--text); }
+.season-tabs [role="tab"].sel .count { background: rgba(0, 0, 0, 0.12); color: var(--bg); }
+.button.glass.in-list { background: rgba(255, 79, 129, 0.22); border-color: rgba(255, 79, 129, 0.5); }
+.badge-new {
+  display: inline-flex; align-items: center; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 0.18rem 0.5rem; border-radius: 6px; background: var(--grad-warm); color: #fff; white-space: nowrap;
+}
+.badge-new.on-thumb { position: absolute; top: 8px; left: 8px; z-index: 2; }
+.badge-new.on-poster { position: absolute; top: 10px; left: 10px; z-index: 2; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); }
+.list-flag { position: absolute; top: 10px; right: 10px; z-index: 2; width: 28px; height: 28px; border-radius: 999px; display: grid; place-items: center; background: rgba(0, 0, 0, 0.6); color: var(--accent); }
+.thumb-wrap { position: relative; }
+.row-scroll.posters { grid-auto-columns: clamp(140px, 13vw, 190px); }
+.episode-title-row { display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap; }
+.seen-btn.on { color: var(--ok); }
+.episode-row[draggable="true"] { grid-template-columns: auto clamp(150px, 19vw, 250px) 1fr auto; }
+.reorder { display: flex; flex-direction: column; align-items: center; gap: 0.1rem; color: var(--faint); }
+.grip { cursor: grab; padding: 0.15rem; }
+.icon-btn.tiny { padding: 0.2rem; }
+.episode-row.dragging { opacity: 0.4; }
+.episode-row.drop-over { box-shadow: inset 0 3px 0 var(--accent); background: var(--surface); }
+.episode-edit { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: flex-end; }
+.episode-edit label { font-size: 0.75rem; color: var(--muted); }
+.episode-edit label.mini { width: 4.6rem; flex: none; }
+.episode-edit label.grow { flex: 1; min-width: 150px; }
+.episode-edit input, .episode-edit select { padding: 0.5rem 0.65rem; width: 100%; }
+.edit-btns { display: flex; gap: 0.35rem; }
+@media (max-width: 640px) {
+  .episode-row[draggable="true"] { grid-template-columns: auto 110px 1fr; }
+  .reorder { grid-row: span 2; }
+}
+/* Statistiques */
+.stats-card .sub-h { font-size: 0.82rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin: 1.2rem 0 0.7rem; font-family: var(--font); }
+.stats-card .sub-h:first-of-type { margin-top: 0.2rem; }
+.rank-list { margin: 0; padding-left: 1.3rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.rank-list li { display: flex; justify-content: space-between; gap: 0.8rem; flex-wrap: wrap; }
+.rank-list a { color: var(--text); text-decoration: none; font-weight: 600; }
+.rank-list a:hover { color: var(--accent); }
+.rank-list li::marker { color: var(--muted); font-weight: 700; }
