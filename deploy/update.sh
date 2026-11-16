@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cals — mise a jour : sauvegarde, recuperation du code, reconstruction.
+# Animes — mise a jour : sauvegarde, recuperation du code, reconstruction.
 # Usage : bash ~/cals/deploy/update.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -17,5 +17,5 @@ for i in $(seq 1 30); do
   curl -fsS "http://127.0.0.1:$PORT/api/health" && { echo; echo "Mise a jour OK ($(git rev-parse --short HEAD))"; exit 0; }
   sleep 2
 done
-echo "Cals ne repond pas apres la mise a jour : docker compose logs backend" >&2
+echo "Le site ne repond pas apres la mise a jour : docker compose logs backend" >&2
 exit 1

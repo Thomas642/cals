@@ -5,13 +5,9 @@ services:
     build: ./backend
     restart: unless-stopped
     environment:
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
-      GEMINI_FALLBACK_MODELS: ${GEMINI_FALLBACK_MODELS:-gemini-3.7-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.8-flash}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-haiku-4-5}
-      AI_PROVIDER: ${AI_PROVIDER:-}
+      MAX_VIDEO_GB: ${MAX_VIDEO_GB:-20}
     volumes:
+      # Base SQLite + videos et sous-titres (/data/media). Volume conserve d'une version a l'autre.
       - cals-data:/data
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]

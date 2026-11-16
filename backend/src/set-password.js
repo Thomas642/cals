@@ -1,4 +1,4 @@
-// Definit l'identifiant et le mot de passe de Cals.
+// Definit l'identifiant et le mot de passe de connexion au site.
 //   docker compose exec backend node src/set-password.js <identifiant>
 // Le mot de passe est demande deux fois (saisie masquee), ou lu dans CALS_PASSWORD.
 import readline from 'node:readline';

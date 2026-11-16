@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cals — sauvegarde a chaud de la base SQLite vers ./backups (garde les 30 dernieres).
+# Animes — sauvegarde a chaud de la base SQLite (series, episodes, identifiants ; pas les videos) vers ./backups (garde les 30 dernieres).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p backups

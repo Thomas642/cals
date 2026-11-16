@@ -1,10 +1,11 @@
-// Client HTTP de l'API Cals, avec cache memoire des GET (affichage immediat au retour
+// Client HTTP de l'API, avec cache memoire des GET (affichage immediat au retour
 // sur une page, puis rafraichissement en arriere-plan).
 export class ApiError extends Error {
-  constructor(message, status, code) {
+  constructor(message, status, data) {
     super(message);
     this.status = status;
-    this.code = code;
+    this.code = data?.code;
+    this.data = data;
   }
 }
 
@@ -13,8 +14,16 @@ const inflight = new Map();       // path -> promesse en cours
 const listeners = new Set();      // abonnes aux invalidations
 
 export function onUnauthorized(handler) {
-  window.addEventListener('cals:unauthorized', handler);
-  return () => window.removeEventListener('cals:unauthorized', handler);
+  window.addEventListener('app:unauthorized', handler);
+  return () => window.removeEventListener('app:unauthorized', handler);
+}
+
+export function errorFromResponse(status, data) {
+  if (status === 401 && data?.code === 'auth_required') window.dispatchEvent(new Event('app:unauthorized'));
+  const fallback = status === 413
+    ? 'Fichier trop volumineux pour le serveur (limite du proxy)'
+    : `Erreur serveur (HTTP ${status})`;
+  return new ApiError(data?.error || fallback, status, data);
 }
 
 async function request(method, path, body) {
@@ -26,10 +35,7 @@ async function request(method, path, body) {
   });
   if (res.status === 204) return null;
   const data = await res.json().catch(() => null);
-  if (!res.ok) {
-    if (res.status === 401 && data?.code === 'auth_required') window.dispatchEvent(new Event('cals:unauthorized'));
-    throw new ApiError(data?.error || `Erreur serveur (HTTP ${res.status})`, res.status, data?.code);
-  }
+  if (!res.ok) throw errorFromResponse(res.status, data);
   return data;
 }
 
@@ -42,13 +48,14 @@ function fetchCached(path) {
   return p;
 }
 
+function invalidate() {
+  cache.clear();
+  listeners.forEach((fn) => fn());
+}
+
 /** Toute ecriture invalide le cache : les pages abonnees se rechargent. */
 function mutate(method, path, body) {
-  return request(method, path, body).then((data) => {
-    cache.clear();
-    listeners.forEach((fn) => fn());
-    return data;
-  });
+  return request(method, path, body).then((data) => { invalidate(); return data; });
 }
 
 export const api = {
@@ -58,6 +65,6 @@ export const api = {
   put: (p, b) => mutate('PUT', p, b),
   del: (p) => mutate('DELETE', p),
   subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+  invalidate,
   clear: () => cache.clear(),
-  prefetch: (paths) => paths.forEach((p) => { if (!cache.has(p)) fetchCached(p).catch(() => {}); }),
 };

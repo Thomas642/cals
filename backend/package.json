@@ -1,14 +1,13 @@
 {
-  "name": "cals-backend",
+  "name": "animes-backend",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "API Cals : profil, journal, aliments, recettes, statistiques, assistant IA",
+  "description": "API Animes : series, episodes video, sous-titres, connexion",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "seed": "node src/seed.js",
     "backup": "node src/backup.js",
     "test": "node --test test/*.test.js"
   },
@@ -16,8 +15,6 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.128.0",
-    "@google/genai": "^2.24.0",
     "better-sqlite3": "^13.0.3",
     "express": "^5.2.1"
   }
