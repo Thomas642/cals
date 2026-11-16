@@ -9,7 +9,7 @@ import { setCredentials } from '../src/lib/auth.js';
 
 const mediaDir = fs.mkdtempSync(path.join(os.tmpdir(), 'animes-test-'));
 const db = openDatabase(':memory:');
-const server = createApp(db, { mediaDir, maxVideoBytes: 1024 * 1024 }).listen(0);
+const server = createApp(db, { mediaDir, maxVideoBytes: 1024 * 1024, processing: false }).listen(0);
 const base = `http://127.0.0.1:${server.address().port}/api`;
 test.after(() => { server.close(); fs.rmSync(mediaDir, { recursive: true, force: true }); });
 

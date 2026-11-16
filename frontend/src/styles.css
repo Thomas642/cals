@@ -328,7 +328,7 @@ a.episode-title:hover { color: var(--accent); }
 /* ─── Lecteur ────────────────────────────────────────────────────────────── */
 .watch { max-width: 1280px; margin: 0 auto; }
 .player { position: relative; background: #000; border-radius: var(--radius); overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7); }
-.player video { display: block; width: 100%; max-height: 82vh; background: #000; }
+.player video { display: block; width: 100%; aspect-ratio: 16 / 9; max-height: 82vh; background: #000; }
 video::cue { background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 1.05em; line-height: 1.35; font-family: var(--font); }
 .next-overlay {
   position: absolute; right: 1.2rem; bottom: 4.5rem; display: flex; flex-direction: column; align-items: flex-start; gap: 0.3rem;
@@ -343,3 +343,17 @@ video::cue { background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 1.05em; lin
   .player { border-radius: 0; margin: 0 calc(var(--gutter) * -1); }
   .next-overlay { right: 0.6rem; bottom: 3.6rem; padding: 0.7rem 0.8rem; }
 }
+
+/* Traitement serveur (conversion) */
+.processing { display: flex; flex-direction: column; gap: 0.3rem; max-width: 520px; }
+.processing.failed { color: var(--danger); }
+.tag.info { background: rgba(139, 92, 246, 0.16); color: #c4b5fd; border-color: rgba(139, 92, 246, 0.35); }
+.tag-lang {
+  width: auto; padding: 0 0.15rem; margin-left: 0.1rem; font-size: 0.7rem; font-weight: 700; border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line); color: inherit; cursor: pointer;
+}
+.notice {
+  display: flex; align-items: center; gap: 0.6rem; margin: 0.9rem 0; padding: 0.75rem 0.9rem; border-radius: var(--radius-sm);
+  background: rgba(139, 92, 246, 0.12); border: 1px solid rgba(139, 92, 246, 0.3); color: #ddd6fe;
+}
+.notice .spinner { flex: none; color: #c4b5fd; }

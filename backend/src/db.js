@@ -22,4 +22,7 @@ function migrate(db) {
   const has = (table, col) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
   if (!has('series', 'cover_file')) db.exec('ALTER TABLE series ADD COLUMN cover_file TEXT');
   if (!has('episode', 'thumb_file')) db.exec('ALTER TABLE episode ADD COLUMN thumb_file TEXT');
+  for (const [col, type] of [['processing', 'TEXT'], ['processing_progress', 'REAL'], ['processing_error', 'TEXT'], ['media_info', 'TEXT']]) {
+    if (!has('episode', col)) db.exec(`ALTER TABLE episode ADD COLUMN ${col} ${type}`);
+  }
 }

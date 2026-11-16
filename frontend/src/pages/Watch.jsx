@@ -9,14 +9,25 @@ import Thumb from '../components/Thumb.jsx';
 export default function Watch() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { data: ep, error } = useApi(`/episodes/${id}`);
+  const [poll, setPoll] = useState(false);
+  const { data: ep, error } = useApi(`/episodes/${id}`, { refreshMs: poll ? 5000 : 0 });
   const { data: series } = useApi(ep ? `/series/${ep.series.id}` : null);
   const video = useRef(null);
   const lastSaved = useRef(0);
   const [playError, setPlayError] = useState(null);
   const [ended, setEnded] = useState(false);
+  const [noPicture, setNoPicture] = useState(false);
+  const convertedFrom = useRef(null);
 
-  useEffect(() => { setPlayError(null); setEnded(false); lastSaved.current = 0; }, [id]);
+  useEffect(() => { setPlayError(null); setEnded(false); setNoPicture(false); lastSaved.current = 0; }, [id]);
+  const processing = ep && (ep.processing === 'queued' || ep.processing === 'running');
+  useEffect(() => { setPoll(!!processing); }, [processing]);
+  // Fin de conversion pendant qu'on est sur la page : on recharge le lecteur sur la nouvelle video.
+  useEffect(() => {
+    if (!ep) return;
+    if (processing) convertedFrom.current = ep.id;
+    else if (convertedFrom.current === ep.id && ep.processing === 'done') { convertedFrom.current = null; setNoPicture(false); setPlayError(null); }
+  }, [ep, processing]);
 
   if (error) return <><Link to="/" className="back"><Icon name="chevronLeft" size={18} /> Bibliothèque</Link><p className="alert">{error.message}</p></>;
   if (!ep) return <div className="watch"><div className="player sk-block" style={{ aspectRatio: '16 / 9' }} /></div>;
@@ -29,6 +40,8 @@ export default function Watch() {
 
   function onLoaded() {
     const v = video.current;
+    // Son sans image : le navigateur ne decode pas la piste video (HEVC, H.264 10 bits...).
+    setNoPicture(!!v && v.duration > 0 && v.videoWidth === 0);
     const p = progressOf(ep.id);
     if (v && p && !p.watched && p.pos > 5 && p.pos < v.duration - 10) v.currentTime = p.pos;
     // Active la premiere piste francaise (sinon la premiere piste).
@@ -63,14 +76,14 @@ export default function Watch() {
       <Link to={`/serie/${ep.series.id}`} className="back"><Icon name="chevronLeft" size={18} /> {ep.series.title}</Link>
       <div className="player">
         <video
-          key={ep.id}
+          key={ep.video_url}
           ref={video}
           controls
           autoPlay
           playsInline
           preload="metadata"
           poster={ep.thumb_url || undefined}
-          src={`/api/media/video/${ep.id}`}
+          src={ep.video_url}
           onLoadedMetadata={onLoaded}
           onTimeUpdate={onTime}
           onPause={save}
@@ -89,6 +102,20 @@ export default function Watch() {
           </button>
         )}
       </div>
+      {processing && ep.media?.action && ep.media.action !== 'none' && (
+        <p className="notice">
+          <span className="spinner" /> Cette vidéo est en cours de préparation pour le navigateur
+          ({Math.floor((ep.processing_progress || 0) * 100)} %). Si l'image reste noire, reviens quand c'est terminé :
+          le lecteur se rechargera tout seul.
+        </p>
+      )}
+      {noPicture && !processing && (
+        <p className="alert">
+          Le son est lu mais pas l'image : ce navigateur ne sait pas décoder la piste vidéo
+          {ep.media?.video ? ` (${ep.media.video})` : ''}.
+          {ep.processing === 'failed' ? ` La conversion automatique a échoué : ${ep.processing_error}` : ' Active « Gérer » sur la page de la série pour relancer la conversion.'}
+        </p>
+      )}
       {playError && <p className="alert">{playError}</p>}
 
       <div className="watch-bar">

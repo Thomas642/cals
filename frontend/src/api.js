@@ -73,6 +73,8 @@ function mutate(method, path, body) {
 export const api = {
   get: fetchCached,
   cached: (path) => cache.get(path),
+  /** Recharge une ressource sans prevenir les autres pages (pas d'invalidation globale). */
+  refresh: (path) => request('GET', path).then((data) => { cache.set(path, data); return data; }),
   post: (p, b) => mutate('POST', p, b ?? {}),
   put: (p, b) => mutate('PUT', p, b),
   del: (p) => mutate('DELETE', p),

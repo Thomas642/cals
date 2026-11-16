@@ -6,6 +6,9 @@ services:
     restart: unless-stopped
     environment:
       MAX_VIDEO_GB: ${MAX_VIDEO_GB:-20}
+      VIDEO_PROCESSING: ${VIDEO_PROCESSING:-on}
+      X264_PRESET: ${X264_PRESET:-veryfast}
+      X264_CRF: ${X264_CRF:-20}
     volumes:
       # Base SQLite + videos et sous-titres (/data/media). Volume conserve d'une version a l'autre.
       - cals-data:/data
