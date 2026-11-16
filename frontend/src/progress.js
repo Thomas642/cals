@@ -1,31 +1,60 @@
-// Progression de lecture memorisee dans ce navigateur : reprise, episodes vus, « Continuer a regarder ».
+// Progression de lecture, enregistree sur le serveur pour le compte connecte (suit la personne
+// d'un appareil a l'autre). Cache memoire pour l'affichage immediat.
 import { useSyncExternalStore } from 'react';
+import { api } from './api.js';
+import { episodeLabel } from './files.js';
 
-const KEY = 'anime:progress';
+const SEND_EVERY_MS = 10000;
 const listeners = new Set();
-let cache = load();
+let cache = {};          // episodeId -> { pos, dur, watched, at, seriesId, seriesTitle, label, thumb }
+const lastSent = new Map();
 
-function load() {
-  try { return JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch { return {}; }
-}
-function save() {
-  try { localStorage.setItem(KEY, JSON.stringify(cache)); } catch { /* stockage indisponible */ }
+function emit() {
   cache = { ...cache };
   listeners.forEach((fn) => fn());
 }
 
-/** Enregistre la position. info : { seriesId, seriesTitle, label, thumb, cover }. */
-export function recordProgress(episodeId, pos, dur, info) {
-  // Vu : plus de 95 % regardes, ou moins de 90 s restantes sur un episode de plus de 10 min (generique de fin).
-  const watched = dur > 0 && (pos / dur > 0.95 || (dur > 600 && dur - pos < 90));
-  const prev = cache[episodeId] || {};
-  cache[episodeId] = { ...prev, ...info, pos: watched ? 0 : Math.floor(pos), dur: Math.floor(dur || prev.dur || 0), watched: watched || !!prev.watched, at: Date.now() };
-  save();
+/** Charge la progression du compte (au demarrage et apres connexion). */
+export async function loadProgress() {
+  try {
+    const rows = await api.refresh('/progress');
+    cache = {};
+    for (const r of rows) {
+      cache[r.episode_id] = {
+        pos: r.pos, dur: r.dur, watched: r.watched, at: Date.parse(`${r.updated_at.replace(' ', 'T')}Z`) || 0,
+        seriesId: r.series_id, seriesTitle: r.series_title, label: episodeLabel({ number: r.number }), thumb: r.thumb_url,
+      };
+    }
+    emit();
+  } catch { /* progression facultative */ }
 }
 
-export function markWatched(episodeId, info) {
-  cache[episodeId] = { ...(cache[episodeId] || {}), ...info, pos: 0, watched: true, at: Date.now() };
-  save();
+export function clearProgress() {
+  cache = {};
+  lastSent.clear();
+  emit();
+}
+
+const isWatched = (pos, dur) => dur > 0 && (pos / dur > 0.95 || (dur > 600 && dur - pos < 90));
+
+function send(episodeId, body) {
+  lastSent.set(episodeId, Date.now());
+  api.send('PUT', `/progress/${episodeId}`, body).catch(() => {});
+}
+
+/** Enregistre la position. info : { seriesId, seriesTitle, label, thumb }. force : envoi immediat (pause, sortie). */
+export function recordProgress(episodeId, pos, dur, info, { force = false } = {}) {
+  const watched = isWatched(pos, dur);
+  const prev = cache[episodeId] || {};
+  cache[episodeId] = { ...prev, ...info, pos: watched ? 0 : Math.floor(pos), dur: Math.floor(dur || prev.dur || 0), watched: watched || !!prev.watched, at: Date.now() };
+  emit();
+  if (force || watched || Date.now() - (lastSent.get(episodeId) || 0) > SEND_EVERY_MS) send(episodeId, { pos, dur });
+}
+
+export function markWatched(episodeId, dur, info) {
+  cache[episodeId] = { ...(cache[episodeId] || {}), ...info, pos: 0, dur: Math.floor(dur || 0), watched: true, at: Date.now() };
+  emit();
+  send(episodeId, { pos: dur || 0, dur: dur || 0, watched: true });
 }
 
 export const progressOf = (episodeId) => cache[episodeId] || null;

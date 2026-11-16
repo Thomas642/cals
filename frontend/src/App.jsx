@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api, onUnauthorized } from './api.js';
-import Icon from './components/Icon.jsx';
+import { clearProgress, loadProgress } from './progress.js';
+import { setManage } from './manage.js';
 import UploadTray from './components/UploadTray.jsx';
-import { setManage, useManage } from './manage.js';
+import AccountMenu from './components/AccountMenu.jsx';
+import Logo from './components/Logo.jsx';
 import Login from './pages/Login.jsx';
 import Library from './pages/Library.jsx';
 import Series from './pages/Series.jsx';
 import Watch from './pages/Watch.jsx';
+import Admin from './pages/Admin.jsx';
+import Account from './pages/Account.jsx';
 
 export default function App() {
   const [auth, setAuth] = useState(undefined);
@@ -16,7 +20,12 @@ export default function App() {
   const boot = useCallback(async () => {
     try {
       setError(null);
-      setAuth(await api.get('/auth/status'));
+      const status = await api.refresh('/auth/status');
+      if (status.authenticated) {
+        if (status.user.role !== 'admin') setManage(false);
+        await loadProgress();
+      }
+      setAuth(status);
     } catch (e) {
       // 429 (limite de requetes d'un proxy) ou serveur indisponible : nouvel essai automatique.
       const wait = e.status === 429 ? Math.min(600, e.retryAfter ?? 30) : 10;
@@ -30,12 +39,13 @@ export default function App() {
     const t = setTimeout(boot, Math.max(0, error.retryAt - Date.now()));
     return () => clearTimeout(t);
   }, [error, boot]);
-  useEffect(() => onUnauthorized(() => { api.clear(); setAuth((a) => ({ ...a, authenticated: false })); }), []);
+  useEffect(() => onUnauthorized(() => { api.clear(); clearProgress(); setAuth((a) => ({ ...a, authenticated: false, user: null })); }), []);
 
   const logout = useCallback(async () => {
     await api.post('/auth/logout').catch(() => {});
     api.clear();
-    setAuth((a) => ({ ...a, authenticated: false }));
+    clearProgress();
+    setAuth((a) => ({ ...a, authenticated: false, user: null }));
   }, []);
 
   if (error) return <BootError error={error} onRetry={boot} />;
@@ -43,7 +53,7 @@ export default function App() {
   if (!auth.authenticated) {
     return <Login configured={auth.configured} onLoggedIn={() => { api.clear(); setAuth(undefined); boot(); }} />;
   }
-  return <Shell onLogout={logout} username={auth.username} />;
+  return <Shell user={auth.user} onLogout={logout} />;
 }
 
 function BootError({ error, onRetry }) {
@@ -62,10 +72,10 @@ function BootError({ error, onRetry }) {
   );
 }
 
-function Shell({ onLogout, username }) {
+function Shell({ user, onLogout }) {
   const location = useLocation();
-  const manage = useManage();
   const [scrolled, setScrolled] = useState(false);
+  const isAdmin = user.role === 'admin';
   useEffect(() => { window.scrollTo(0, 0); }, [location.pathname]);
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -77,26 +87,24 @@ function Shell({ onLogout, username }) {
   return (
     <div className="layout">
       <header className={`topbar${scrolled ? ' scrolled' : ''}`}>
-        <Link to="/" className="brand"><span className="logo" aria-hidden="true"><Icon name="play" size={13} /></span>Animés</Link>
-        <nav className="topnav">
-          <button className={`pill-toggle${manage ? ' on' : ''}`} onClick={() => setManage(!manage)} aria-pressed={manage}
-            title="Afficher les outils pour importer des vidéos et des sous-titres">
-            <Icon name={manage ? 'check' : 'upload'} size={16} /> <span>{manage ? 'Gestion activée' : 'Gérer'}</span>
-          </button>
-          <button className="icon-btn ghost" onClick={onLogout} title={username ? `Déconnexion (${username})` : 'Déconnexion'} aria-label="Déconnexion">
-            <Icon name="logout" size={18} />
-          </button>
-        </nav>
+        <Link to="/" className="brand" aria-label="Accueil"><Logo size={34} /></Link>
+        <AccountMenu user={user} onLogout={onLogout} />
       </header>
-      <main className="page">
+      <main className="page" key={location.pathname}>
         <Routes>
-          <Route path="/" element={<Library />} />
-          <Route path="/serie/:id" element={<Series />} />
+          <Route path="/" element={<Library user={user} />} />
+          <Route path="/serie/:id" element={<Series user={user} />} />
           <Route path="/regarder/:id" element={<Watch />} />
+          <Route path="/compte" element={<Account user={user} />} />
+          {isAdmin && <Route path="/admin" element={<Admin me={user} />} />}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
-      <UploadTray />
+      <footer className="footer">
+        <Logo size={22} />
+        <span>Pour regarder ensemble, en VOSTFR.</span>
+      </footer>
+      {isAdmin && <UploadTray />}
     </div>
   );
 }

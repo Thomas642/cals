@@ -8,13 +8,22 @@ import { setManage, useManage } from '../manage.js';
 import Icon from '../components/Icon.jsx';
 import Poster from '../components/Poster.jsx';
 import Thumb from '../components/Thumb.jsx';
+import { LogoMark } from '../components/Logo.jsx';
 
-export default function Library() {
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 5 || h >= 18) return 'Bonsoir';
+  return 'Bonjour';
+}
+
+export default function Library({ user }) {
+  const isAdmin = user.role === 'admin';
   const { data: series, error } = useApi('/series');
-  const { data: storage } = useApi('/storage');
-  const manage = useManage();
+  const { data: storage } = useApi(isAdmin ? '/storage' : null);
+  const manage = useManage() && isAdmin;
   useProgress(); // re-rendu quand la progression change
   const [adding, setAdding] = useState(false);
+  const firstName = user.display_name || user.username;
 
   const recent = series ? recentBySeries().filter((p) => series.some((s) => s.id === p.seriesId)).slice(0, 12) : [];
   const featured = series && (series.find((s) => s.id === recent[0]?.seriesId) || series.find((s) => s.episode_count > 0));
@@ -25,30 +34,34 @@ export default function Library() {
   if (series.length === 0 && !adding) {
     return (
       <section className="welcome">
-        <div className="welcome-art" aria-hidden="true"><Icon name="library" size={44} /></div>
-        <h1>Bienvenue</h1>
-        <p>Crée ta première série, puis importe ses épisodes et leurs sous-titres.</p>
-        <button className="primary big-btn" onClick={() => { setManage(true); setAdding(true); }}><Icon name="plus" size={18} /> Créer une série</button>
+        <div className="welcome-art"><LogoMark size={88} /></div>
+        <h1>{greeting()} {firstName} !</h1>
+        {isAdmin ? (
+          <>
+            <p>La bibliothèque est vide. Crée une première série, puis importe ses épisodes et leurs sous-titres.</p>
+            <button className="primary big-btn" onClick={() => { setManage(true); setAdding(true); }}><Icon name="plus" size={18} /> Créer une série</button>
+          </>
+        ) : <p>Aucune série pour l'instant. Reviens bientôt !</p>}
       </section>
     );
   }
 
   return (
     <>
-      {featured && !adding && <Hero series={featured} recent={recent.find((p) => p.seriesId === featured.id)} />}
+      {featured && !adding && <Hero series={featured} recent={recent.find((p) => p.seriesId === featured.id)} hello={`${greeting()} ${firstName}`} />}
 
       {adding && <NewSeries onClose={() => setAdding(false)} />}
 
       {recent.length > 0 && (
         <section className="shelf">
-          <h2>Continuer à regarder</h2>
+          <div className="shelf-head"><h2>Continuer à regarder</h2></div>
           <ul className="row-scroll">
             {recent.map((p) => (
               <li key={p.seriesId}>
                 <Link to={`/regarder/${p.episodeId}`} className="continue-card">
                   <Thumb src={p.thumb} seed={p.seriesTitle} progress={p} watched={p.watched} />
                   <strong>{p.seriesTitle}</strong>
-                  <span className="muted small">{p.watched ? `${p.label} · vu` : p.label}</span>
+                  <span className="muted small">{p.watched ? `${p.label} · vu` : p.dur ? `${p.label} · ${Math.max(1, Math.round((p.dur - p.pos) / 60))} min restantes` : p.label}</span>
                 </Link>
               </li>
             ))}
@@ -58,14 +71,17 @@ export default function Library() {
 
       <section className="shelf">
         <div className="shelf-head">
-          <h2>Toutes les séries</h2>
+          <h2>Toutes les séries <span className="count">{series.length}</span></h2>
           {manage && !adding && <button className="primary" onClick={() => setAdding(true)}><Icon name="plus" size={16} /> Nouvelle série</button>}
         </div>
         <ul className="poster-grid">
-          {series.map((s) => (
-            <li key={s.id}>
+          {series.map((s, i) => (
+            <li key={s.id} style={{ '--i': i }}>
               <Link to={`/serie/${s.id}`} className="poster-card">
-                <Poster series={s} />
+                <div className="poster-wrap">
+                  <Poster series={s} />
+                  <span className="poster-hover"><span className="poster-play"><Icon name="play" size={22} /></span></span>
+                </div>
                 <strong>{s.title}</strong>
                 <span className="muted small">
                   {s.episode_count} épisode{s.episode_count > 1 ? 's' : ''}
@@ -86,16 +102,20 @@ export default function Library() {
   );
 }
 
-function Hero({ series, recent }) {
+function Hero({ series, recent, hello }) {
+  // Fond : miniature 16:9 de l'episode en cours, sinon l'affiche floutee (format portrait).
+  // Sans affiche importee, cover_url est la miniature (16:9) du premier episode : affichee nette.
+  const bg = recent?.thumb || (!series.has_custom_cover ? series.cover_url : null);
   return (
     <section className="hero">
-      {/* Fond : miniature 16:9 de l'episode en cours, sinon l'affiche floutee (format portrait). */}
-      {recent?.thumb
-        ? <img className="hero-bg" src={recent.thumb} alt="" />
-        : series.cover_url && <img className="hero-bg blur" src={series.cover_url} alt="" />}
+      <div className="hero-media">
+        {bg ? <img className="hero-bg kenburns" src={bg} alt="" />
+          : series.cover_url && <img className="hero-bg blur" src={series.cover_url} alt="" />}
+      </div>
       <div className="hero-shade" />
       <div className="hero-content">
-        <span className="eyebrow">{recent ? 'Reprendre' : 'À voir'}</span>
+        <span className="hello">{hello}</span>
+        <span className="eyebrow">{recent ? (recent.watched ? 'Dernier épisode vu' : 'Reprendre où tu t\'es arrêté') : 'À découvrir'}</span>
         <h1>{series.title}</h1>
         {series.description && <p className="hero-desc">{series.description}</p>}
         <div className="row-actions start">
@@ -139,10 +159,10 @@ function NewSeries({ onClose }) {
   }
 
   return (
-    <form className="panel form" onSubmit={submit}>
+    <form className="panel form new-series" onSubmit={submit}>
       <h2>Nouvelle série</h2>
       <label>Titre
-        <input value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={200} autoFocus placeholder="ex. Frieren, saison 1" />
+        <input value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={200} autoFocus placeholder="ex. Re:Zero, saison 1" />
       </label>
       <label>Description <span className="muted small">(facultatif)</span>
         <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} maxLength={4000} />

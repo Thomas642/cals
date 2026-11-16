@@ -36,10 +36,33 @@ deploy/                   installation, mise à jour, sauvegarde, bloc nginx hô
 
 ## Utilisation
 
-Les outils d'import et d'édition n'apparaissent qu'avec le bouton **Gérer** (en haut à droite) ; sans lui, le site
-reste en mode visionnage, sans boutons de suppression. Le choix est mémorisé dans chaque navigateur.
+### Comptes
 
-1. **Gérer > Nouvelle série** : donner un titre.
+Deux rôles :
+
+- **Administrateur** : tout gérer (séries, épisodes, sous-titres, affiches, comptes).
+- **Spectateur** : voit les séries et regarde les épisodes terminés, rien d'autre. Le serveur refuse toute
+  modification (HTTP 403), cache les épisodes en cours d'envoi et les détails techniques (noms de fichier, codecs).
+
+Les comptes se gèrent dans le menu du compte (en haut à droite) > **Comptes de la famille** : création avec un mot
+de passe généré à transmettre, changement de rôle, nouveau mot de passe, désactivation (déconnecte la personne),
+suppression. Le dernier administrateur actif ne peut être ni rétrogradé, ni désactivé, ni supprimé. Chacun peut
+changer son mot de passe dans **Mon mot de passe**.
+
+La progression de lecture (reprise, épisodes vus, « Continuer à regarder ») est enregistrée **par compte sur le
+serveur** : elle suit la personne d'un appareil à l'autre.
+
+**Téléchargement** : le lecteur n'affiche pas de bouton « Télécharger » (`controlsList="nodownload"`), le clic droit
+sur la vidéo est désactivé et la vidéo est servie en `Content-Disposition: inline`. Cela retire les moyens simples
+d'enregistrer une vidéo ; cela n'empêche pas une personne qui s'y connaît de récupérer le flux (aucun site sans DRM
+ne le peut). Seules les personnes à qui tu crées un compte ont accès au site.
+
+### Import
+
+Les outils d'import et d'édition n'apparaissent qu'avec le **Mode gestion** (menu du compte, administrateurs
+seulement) ; sans lui, le site reste en mode visionnage. Le choix est mémorisé dans chaque navigateur.
+
+1. **Nouvelle série** (en mode gestion) : donner un titre.
 2. Sur la page de la série, **glisser les vidéos** dans la zone d'import (ou cliquer pour les choisir).
    Un épisode est créé par fichier et l'envoi démarre. On peut changer de page pendant l'envoi
    (panneau en bas à droite) ; fermer l'onglet l'interrompt.
@@ -51,9 +74,9 @@ reste en mode visionnage, sans boutons de suppression. Le choix est mémorisé d
 rattaché à l'épisode 3. Si aucun numéro n'est trouvé, la vidéo prend le numéro suivant ; le numéro et le titre
 se modifient avec le crayon.
 
-**Affiche et miniatures** : chaque épisode reçoit une miniature, capturée par le navigateur à 25 % de la vidéo
-au moment de l'import (ou à la première visite de la série pour les épisodes déjà en ligne). Si le navigateur ne
-sait pas décoder la vidéo, l'épisode garde une vignette colorée. L'affiche de la série est l'image choisie avec
+**Affiche et miniatures** : chaque épisode reçoit une miniature, extraite par ffmpeg à 25 % de la vidéo dès la fin
+de l'envoi, avant les conversions (et au démarrage du serveur pour les épisodes qui n'en ont pas). Si ffmpeg ne peut pas lire
+le fichier, l'épisode garde une vignette colorée. L'affiche de la série est l'image choisie avec
 « Choisir une affiche » (JPEG, PNG ou WebP, 8 Mo maximum), sinon la miniature du premier épisode.
 
 **Langue de la piste** : lue dans le dernier mot du nom (`ep01.fr.srt`, `ep01_eng.ass`, `ep01.ja.srt`) ; français
@@ -179,7 +202,7 @@ Si le port 8080 est déjà pris : `PORT=8090 MODE=nginx bash install.sh`.
 
 ### Connexion
 
-Un seul identifiant pour le site, à partager avec la famille. Session gardée par cookie sécurisé
+Un compte par personne (voir « Comptes »). Session gardée par cookie sécurisé
 (`HttpOnly`, `SameSite=Lax`, `Secure` en HTTPS) : 90 jours avec « Rester connecté ». Mot de passe haché
 (scrypt). 5 échecs depuis une même IP bloquent les tentatives 15 minutes.
 
@@ -187,7 +210,9 @@ Un seul identifiant pour le site, à partager avec la famille. Session gardée p
 docker compose -f ~/cals/docker-compose.yml exec backend node src/set-password.js <identifiant>
 ```
 
-(change l'identifiant et le mot de passe et déconnecte toutes les sessions)
+(crée ce compte administrateur, ou lui donne un nouveau mot de passe et le repasse administrateur s'il existe ;
+ses sessions sont déconnectées). Utile si tu perds ton mot de passe. Lors de la mise à jour vers les comptes,
+l'ancien identifiant unique devient automatiquement le premier administrateur, avec le même mot de passe.
 
 ### Cloudflare et HTTPS (mode nginx)
 
@@ -218,12 +243,18 @@ en bas de la Bibliothèque. Ne pas lancer `docker compose down -v` : l'option `-
 
 ## API
 
-Toutes les routes sauf `/api/health` et `/api/auth/*` exigent une session.
+Toutes les routes sauf `/api/health` et `/api/auth/*` exigent une session. Un spectateur n'a accès qu'aux
+lectures (GET, sauf `/api/users` et `/api/storage`), à sa progression et à son mot de passe.
 
 | Méthode | Route | Rôle |
 |---|---|---|
 | GET | /api/health | État de l'API |
 | GET / POST | /api/auth/status, /api/auth/login, /api/auth/logout | Connexion |
+| GET / POST | /api/users | Comptes (administrateurs) : liste / création `{ username, password, role, display_name }` |
+| PUT / DELETE | /api/users/:id | Nom, rôle, mot de passe, désactivation / suppression |
+| PUT | /api/me/password | Changer son mot de passe `{ current, password }` |
+| GET | /api/progress | Progression de lecture du compte connecté |
+| PUT / DELETE | /api/progress/:episodeId | Position `{ pos, dur, watched? }` / remise à zéro |
 | GET | /api/storage | Espace disque libre, volume des vidéos |
 | GET / POST | /api/series | Liste (avec nombre d'épisodes) / création `{ title, description }` |
 | GET / PUT / DELETE | /api/series/:id | Détail avec épisodes et pistes / modification / suppression (fichiers compris) |

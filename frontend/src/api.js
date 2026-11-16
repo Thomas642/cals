@@ -74,6 +74,8 @@ export const api = {
   get: fetchCached,
   cached: (path) => cache.get(path),
   /** Recharge une ressource sans prevenir les autres pages (pas d'invalidation globale). */
+  /** Ecriture discrete (ex. position de lecture) : n'invalide pas le cache des autres pages. */
+  send: (method, path, body) => request(method, path, body),
   refresh: (path) => request('GET', path).then((data) => { cache.set(path, data); return data; }),
   post: (p, b) => mutate('POST', p, b ?? {}),
   put: (p, b) => mutate('PUT', p, b),
