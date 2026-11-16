@@ -11,6 +11,7 @@ import Library from './pages/Library.jsx';
 import Series from './pages/Series.jsx';
 import Watch from './pages/Watch.jsx';
 import Admin from './pages/Admin.jsx';
+import Dashboard from './pages/Dashboard.jsx';
 import Account from './pages/Account.jsx';
 
 export default function App() {
@@ -96,7 +97,8 @@ function Shell({ user, onLogout }) {
           <Route path="/serie/:id" element={<Series user={user} />} />
           <Route path="/regarder/:id" element={<Watch />} />
           <Route path="/compte" element={<Account user={user} />} />
-          {isAdmin && <Route path="/admin" element={<Admin me={user} />} />}
+          {isAdmin && <Route path="/admin" element={<Dashboard />} />}
+          {isAdmin && <Route path="/admin/comptes" element={<Admin me={user} />} />}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

@@ -1,11 +1,13 @@
 import express from 'express';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { ROLES, createAuth, hashPassword, validatePassword, validateUsername, verifyPassword } from './lib/auth.js';
 import { SUBTITLE_EXTENSIONS, toWebVtt } from './lib/subtitles.js';
 import { createProcessor } from './lib/processor.js';
+import { ffmpegAvailable } from './lib/media.js';
 
 // Formats video acceptes et type MIME annonce au navigateur. Le MP4 (H.264 + AAC) est le plus
 // largement lisible ; MKV et MOV dependent du navigateur et des codecs du fichier.
@@ -162,7 +164,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
   // Spectateurs : lecture seule (series, episodes, medias) + leur progression et leur mot de passe.
   r.use((req, res, next) => {
     if (req.user.role === 'admin') return next();
-    if (req.method === 'GET' && !/^\/(storage|users)(\/|$)/.test(req.path)) return next();
+    if (req.method === 'GET' && !/^\/(storage|users|admin)(\/|$)/.test(req.path)) return next();
     if (/^\/progress\/\d+$/.test(req.path) && ['PUT', 'DELETE'].includes(req.method)) return next();
     if (req.path === '/me/password' && req.method === 'PUT') return next();
     return auth.requireAdmin(req, res, next);
@@ -230,6 +232,91 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
   };
 
   r.get('/users', (req, res) => res.json(listUsers()));
+
+  // ---------- Tableau de bord (administrateurs) ----------
+  function dirBytes(sub) {
+    let total = 0;
+    try {
+      for (const f of fs.readdirSync(abs(sub), { withFileTypes: true })) if (f.isFile()) total += fileSize(abs(path.join(sub, f.name)));
+    } catch { /* dossier absent */ }
+    return total;
+  }
+
+  // Memoire disponible reelle (MemAvailable) : os.freemem() ne compte pas le cache liberable.
+  function memory() {
+    const total = os.totalmem();
+    try {
+      const m = fs.readFileSync('/proc/meminfo', 'utf8').match(/^MemAvailable:\s+(\d+) kB/m);
+      if (m) return { total, available: Number(m[1]) * 1024 };
+    } catch { /* hors Linux */ }
+    return { total, available: os.freemem() };
+  }
+
+  r.get('/admin/overview', async (req, res) => {
+    let disk = null;
+    try {
+      const st = fs.statfsSync(mediaDir);
+      disk = { total: st.blocks * st.bsize, free: st.bavail * st.bsize, used: (st.blocks - st.bfree) * st.bsize };
+    } catch { /* indisponible */ }
+    const dbFile = db.name && db.name !== ':memory:' ? db.name : null;
+    const dbBytes = dbFile ? fileSize(dbFile) + fileSize(`${dbFile}-wal`) : 0;
+    const media = { videos: dirBytes('videos'), subtitles: dirBytes('subtitles'), images: dirBytes('images'), database: dbBytes };
+
+    const eps = db.prepare('SELECT e.*, s.title AS series_title FROM episode e JOIN series s ON s.id = e.series_id').all();
+    const ready = eps.filter((e) => e.status === 'ready');
+    const subtitled = new Set(db.prepare('SELECT DISTINCT episode_id FROM subtitle').all().map((x) => x.episode_id));
+    const duration = ready.reduce((sum, e) => sum + (e.media_info ? Number(JSON.parse(e.media_info).duration) || 0 : 0), 0);
+    const bySeries = new Map();
+    for (const e of eps) {
+      const cur = bySeries.get(e.series_id) || { id: e.series_id, title: e.series_title, episodes: 0, bytes: 0 };
+      if (e.status === 'ready') { cur.episodes += 1; cur.bytes += e.video_size; } else cur.bytes += fileSize(`${abs(e.video_file)}.part`);
+      bySeries.set(e.series_id, cur);
+    }
+    const epLabel = (e) => ({ id: e.id, series_id: e.series_id, series_title: e.series_title, number: e.number, title: e.title });
+
+    const activity = db.prepare(`SELECT u.username, u.display_name, p.episode_id, p.pos, p.dur, p.watched, p.updated_at, e.number, s.title AS series_title, s.id AS series_id
+      FROM watch_progress p JOIN app_user u ON u.id = p.user_id JOIN episode e ON e.id = p.episode_id JOIN series s ON s.id = e.series_id
+      ORDER BY p.updated_at DESC LIMIT 12`).all().map((a) => ({ ...a, watched: !!a.watched }));
+    const users = db.prepare(`SELECT
+        COUNT(*) AS total,
+        SUM(role = 'admin') AS admins,
+        SUM(disabled = 1) AS disabled,
+        (SELECT COUNT(DISTINCT user_id) FROM watch_progress WHERE updated_at > datetime('now', '-7 days')) AS active_week
+      FROM app_user`).get();
+
+    res.json({
+      generated_at: new Date().toISOString(),
+      disk,
+      media,
+      library: {
+        series: db.prepare('SELECT COUNT(*) AS n FROM series').get().n,
+        episodes: ready.length,
+        subtitled: ready.filter((e) => subtitled.has(e.id)).length,
+        without_subtitles: ready.filter((e) => !subtitled.has(e.id)).map(epLabel),
+        duration_seconds: Math.round(duration),
+        by_series: [...bySeries.values()].sort((a, b) => b.bytes - a.bytes),
+      },
+      processing: eps.filter((e) => ['queued', 'running', 'failed'].includes(e.processing)).map((e) => ({
+        ...epLabel(e), state: e.processing, progress: processor.progressOf(e.id) ?? e.processing_progress ?? 0,
+        error: e.processing_error, reason: e.media_info ? JSON.parse(e.media_info).reason : null,
+      })),
+      incomplete: eps.filter((e) => e.status === 'uploading').map((e) => ({
+        ...epLabel(e), original_name: e.original_name, received: fileSize(`${abs(e.video_file)}.part`), size: e.video_size, created_at: e.created_at,
+      })),
+      users: { ...users, admins: users.admins || 0, disabled: users.disabled || 0 },
+      activity,
+      server: {
+        uptime_seconds: Math.round(os.uptime()),
+        app_uptime_seconds: Math.round(process.uptime()),
+        load: os.loadavg(),
+        cpus: os.cpus().length,
+        memory: memory(),
+        node: process.version,
+        ffmpeg: await ffmpegAvailable(),
+        video_processing: processing,
+      },
+    });
+  });
 
   r.post('/users', (req, res) => {
     const username = validateUsername(req.body?.username);
