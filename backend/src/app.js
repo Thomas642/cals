@@ -35,7 +35,7 @@ function imageType(buf) {
 const IMAGE_MIME = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
 
 // Reglages du lecteur par compte.
-export const DEFAULT_SETTINGS = { autoplay: true, subtitles: { size: 'm', bg: 0.6, position: 'bottom' } };
+export const DEFAULT_SETTINGS = { autoplay: true, seasonal: true, subtitles: { size: 'm', bg: 0.6, position: 'bottom' } };
 const SUB_SIZES = ['s', 'm', 'l', 'xl'];
 const SUB_BG = [0, 0.3, 0.6, 0.85];
 
@@ -249,6 +249,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     const cur = { ...DEFAULT_SETTINGS, ...(req.user.settings ? JSON.parse(req.user.settings) : {}) };
     const next = { ...cur, subtitles: { ...DEFAULT_SETTINGS.subtitles, ...cur.subtitles } };
     if ('autoplay' in b) next.autoplay = !!b.autoplay;
+    if ('seasonal' in b) next.seasonal = !!b.seasonal;
     if (b.subtitles) {
       const sub = b.subtitles;
       if ('size' in sub) { if (!SUB_SIZES.includes(sub.size)) throw httpError(400, 'Taille de sous-titres invalide'); next.subtitles.size = sub.size; }
@@ -328,6 +329,21 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
   };
 
   r.get('/users', (req, res) => res.json(listUsers()));
+
+  // Nettoyage : episodes dont l'envoi s'est arrete depuis plus de N heures (24 par defaut), fichiers partiels compris.
+  r.delete('/admin/incomplete', (req, res) => {
+    const hours = Number(req.query.older_than_hours ?? 24);
+    if (!Number.isFinite(hours) || hours < 0 || hours > 24 * 365) throw httpError(400, 'Durée invalide');
+    const stale = db.prepare(`SELECT * FROM episode WHERE status = 'uploading' AND created_at <= datetime('now', ?)`).all(`-${hours} hours`)
+      .filter((e) => !uploading.has(e.id));
+    let freed = 0;
+    for (const e of stale) {
+      freed += fileSize(`${abs(e.video_file)}.part`);
+      deleteEpisodeFiles(e);
+      db.prepare('DELETE FROM episode WHERE id = ?').run(e.id);
+    }
+    res.json({ deleted: stale.length, freed_bytes: freed });
+  });
 
   // ---------- Tableau de bord (administrateurs) ----------
   function dirBytes(sub) {

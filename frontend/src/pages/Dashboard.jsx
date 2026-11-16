@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { api } from '../api.js';
 import { useApi } from '../hooks.js';
 import { episodeLabel, formatBytes, friendlyError, hueOf } from '../files.js';
 import Icon from '../components/Icon.jsx';
@@ -241,23 +243,7 @@ export default function Dashboard() {
         </section>
 
         {/* ── Envois incomplets ──────────────────────────────── */}
-        {o.incomplete.length > 0 && (
-          <section className="card">
-            <h2>Envois incomplets</h2>
-            <p className="muted small">Ces fichiers partiels occupent de la place. Reprends l'envoi ou supprime l'épisode depuis sa série (mode gestion).</p>
-            <ul className="task-list">
-              {o.incomplete.map((x) => (
-                <li key={x.id}>
-                  <div className="task-line">
-                    <Link to={`/serie/${x.series_id}`}>{x.series_title} · {episodeLabel(x)}</Link>
-                    <span className="muted small">{Math.floor(pct(x.received, x.size))} % · {ago(x.created_at)}</span>
-                  </div>
-                  <p className="small muted">{x.original_name} — {formatBytes(x.received)} / {formatBytes(x.size)}</p>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
+        {o.incomplete.length > 0 && <IncompleteCard items={o.incomplete} />}
 
         {/* ── Sans sous-titres ───────────────────────────────── */}
         {library.without_subtitles.length > 0 && (
@@ -272,6 +258,53 @@ export default function Dashboard() {
         )}
       </div>
     </div>
+  );
+}
+
+/** Envois arretes : reprise depuis la serie, ou suppression (un par un, ou tous ceux de plus de 24 h). */
+function IncompleteCard({ items }) {
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const old = items.filter((x) => Date.now() - Date.parse(`${x.created_at.replace(' ', 'T')}Z`) > 24 * 3600 * 1000);
+
+  async function cleanOld() {
+    if (!window.confirm(`Supprimer ${old.length} envoi${old.length > 1 ? 's' : ''} incomplet${old.length > 1 ? 's' : ''} de plus de 24 h ?`)) return;
+    setBusy(true);
+    try {
+      const r = await api.del('/admin/incomplete?older_than_hours=24');
+      setMsg(`${r.deleted} envoi${r.deleted > 1 ? 's' : ''} supprimé${r.deleted > 1 ? 's' : ''}, ${formatBytes(r.freed_bytes)} libérés.`);
+    } catch (err) { setMsg(err.message); } finally { setBusy(false); }
+  }
+  async function removeOne(x) {
+    if (!window.confirm(`Supprimer « ${x.series_title} · ${episodeLabel(x)} » (${formatBytes(x.received)} déjà envoyés) ?`)) return;
+    try { await api.del(`/episodes/${x.id}`); setMsg(`Envoi supprimé, ${formatBytes(x.received)} libérés.`); } catch (err) { setMsg(err.message); }
+  }
+
+  return (
+    <section className="card">
+      <h2>Envois incomplets <span className="count">{items.length}</span></h2>
+      <p className="muted small">Ces fichiers partiels occupent de la place. Reprends l'envoi en réimportant le même fichier dans la série, ou supprime-les.</p>
+      {old.length > 0 && (
+        <button className="ghost-btn danger small-btn clean-btn" onClick={cleanOld} disabled={busy}>
+          {busy ? <span className="spinner" /> : <Icon name="trash" size={15} />} Supprimer ceux de plus de 24 h ({old.length} · {formatBytes(old.reduce((t, x) => t + x.received, 0))})
+        </button>
+      )}
+      {msg && <p className="notice small">{msg}</p>}
+      <ul className="task-list">
+        {items.map((x) => (
+          <li key={x.id}>
+            <div className="task-line">
+              <Link to={`/serie/${x.series_id}`}>{x.series_title} · {episodeLabel(x)}</Link>
+              <span className="row-actions">
+                <span className="muted small">{Math.floor(pct(x.received, x.size))} % · {ago(x.created_at)}</span>
+                <button className="icon-btn ghost danger" onClick={() => removeOne(x)} aria-label={`Supprimer l'envoi ${x.original_name}`}><Icon name="trash" size={15} /></button>
+              </span>
+            </div>
+            <p className="small muted">{x.original_name} — {formatBytes(x.received)} / {formatBytes(x.size)}</p>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

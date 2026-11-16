@@ -2,7 +2,7 @@
 import { useSyncExternalStore } from 'react';
 import { api } from './api.js';
 
-const DEFAULTS = { autoplay: true, subtitles: { size: 'm', bg: 0.6, position: 'bottom' } };
+const DEFAULTS = { autoplay: true, seasonal: true, subtitles: { size: 'm', bg: 0.6, position: 'bottom' } };
 let current = DEFAULTS;
 const listeners = new Set();
 const emit = () => listeners.forEach((fn) => fn());

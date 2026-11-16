@@ -728,3 +728,35 @@ kbd { display: inline-block; min-width: 1.7em; text-align: center; font: 600 0.7
 .anilist-pick img { width: 96px; }
 .anilist-pick .check { margin: 0.4rem 0; font-size: 0.88rem; }
 .pick-desc { max-height: 7.5em; overflow-y: auto; color: #d6d2e0; white-space: pre-line; }
+
+.clean-btn { margin: 0.2rem 0 0.9rem; white-space: normal; text-align: left; }
+
+/* ─── Carrousel de l'accueil ────────────────────────────────────────────── */
+.carousel { display: block; }
+.carousel .slide { position: absolute; inset: 0; display: flex; align-items: flex-end; opacity: 0; visibility: hidden; transition: opacity 0.9s ease, visibility 0s linear 0.9s; }
+.carousel .slide.active { position: relative; min-height: inherit; opacity: 1; visibility: visible; transition: opacity 0.9s ease; }
+.carousel .slide .hero-content { animation: none; }
+.carousel .slide.active .hero-content { animation: rise 0.7s ease-out; }
+.carousel .slide::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(50rem 24rem at 12% 100%, var(--glow, transparent), transparent 70%); }
+.carousel .slide .hero-content { z-index: 1; }
+.car-arrow {
+  position: absolute; top: 50%; z-index: 3; width: 46px; height: 46px; border-radius: 999px; padding: 0; transform: translateY(-50%);
+  background: rgba(9, 8, 13, 0.45); border-color: rgba(255, 255, 255, 0.18); backdrop-filter: blur(10px); opacity: 0; transition: opacity 0.25s, background 0.2s;
+}
+.car-arrow.prev { left: max(12px, calc(var(--edge) - 58px)); }
+.car-arrow.next { right: max(12px, calc(var(--edge) - 58px)); }
+.carousel:hover .car-arrow, .car-arrow:focus-visible { opacity: 1; }
+.car-arrow:hover { background: rgba(9, 8, 13, 0.7); }
+.car-dots { position: absolute; z-index: 3; right: var(--edge); bottom: 3.4rem; display: flex; gap: 0.45rem; }
+.car-dots button { width: 34px; height: 5px; padding: 0; border-radius: 999px; border: none; background: rgba(255, 255, 255, 0.28); overflow: hidden; position: relative; }
+.car-dots button.on { background: rgba(255, 255, 255, 0.45); }
+.car-dots button.on::before { content: ""; position: absolute; inset: 0; background: var(--accent); opacity: 0.35; }
+.car-dots button span { position: absolute; inset: 0; background: var(--accent); transform-origin: left; animation: grow linear forwards; }
+@keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@media (hover: none) { .car-arrow { display: none; } }
+@media (max-width: 640px) { .car-dots { left: var(--edge); right: auto; bottom: 1.1rem; } }
+
+/* ─── Decor de saison ───────────────────────────────────────────────────── */
+.seasonal { position: fixed; inset: 0; pointer-events: none; z-index: 35; }
+.menu-sub { display: block; font-size: 0.74rem; color: var(--muted); font-weight: 400; }
+@media (prefers-reduced-motion: reduce) { .seasonal { display: none; } }

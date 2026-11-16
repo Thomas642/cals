@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { useApi } from '../hooks.js';
@@ -49,7 +49,7 @@ export default function Library({ user }) {
 
   return (
     <>
-      {featured && !adding && <Hero series={featured} recent={recent.find((p) => p.seriesId === featured.id)} hello={`${greeting()} ${firstName}`} />}
+      {featured && !adding && <HeroCarousel slides={pickSlides(series, recent)} hello={`${greeting()} ${firstName}`} />}
 
       {adding && <NewSeries onClose={() => setAdding(false)} />}
 
@@ -141,30 +141,106 @@ function PosterCard({ s }) {
   );
 }
 
-function Hero({ series, recent, hello }) {
-  // Fond : miniature 16:9 de l'episode en cours, sinon l'affiche floutee (format portrait).
-  // Sans affiche importee, cover_url est la miniature (16:9) du premier episode : affichee nette.
-  const bg = recent?.thumb || (!series.has_custom_cover ? series.cover_url : null);
+// Series mises en avant : en cours d'abord, puis avec des nouveautes, puis les autres ; 5 au plus.
+function pickSlides(series, recent) {
+  const out = [];
+  const add = (s, r) => { if (s && s.episode_count > 0 && !out.some((x) => x.series.id === s.id) && out.length < 5) out.push({ series: s, recent: r }); };
+  recent.slice(0, 2).forEach((r) => add(series.find((s) => s.id === r.seriesId), r));
+  series.filter((s) => s.new_count > 0).sort((a, b) => (b.last_added || '').localeCompare(a.last_added || '')).forEach((s) => add(s, recent.find((r) => r.seriesId === s.id)));
+  [...series].sort((a, b) => (b.last_added || '').localeCompare(a.last_added || '')).forEach((s) => add(s, recent.find((r) => r.seriesId === s.id)));
+  return out;
+}
+
+const SLIDE_MS = 8000;
+const reducedMotion = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+/** Carrousel de l'accueil : defilement automatique (pause au survol, au focus et si l'onglet est cache). */
+function HeroCarousel({ slides, hello }) {
+  const [index, setIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const touch = useRef(null);
+  const count = slides.length;
+  const go = useCallback((i) => setIndex(((i % count) + count) % count), [count]);
+
+  useEffect(() => { if (index >= count) setIndex(0); }, [count, index]);
+  useEffect(() => {
+    if (count < 2 || paused || reducedMotion()) return undefined;
+    const t = setTimeout(() => { if (!document.hidden) go(index + 1); }, SLIDE_MS);
+    return () => clearTimeout(t);
+  }, [index, paused, count, go]);
+
+  if (!count) return null;
   return (
-    <section className="hero">
+    <section
+      className="hero carousel"
+      aria-roledescription="carrousel"
+      aria-label="Séries mises en avant"
+      onPointerEnter={(e) => { if (e.pointerType === 'mouse') setPaused(true); }}
+      onPointerLeave={(e) => { if (e.pointerType === 'mouse') setPaused(false); }}
+      onFocus={() => setPaused(true)}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setPaused(false); }}
+      onTouchStart={(e) => { touch.current = e.touches[0].clientX; }}
+      onTouchEnd={(e) => {
+        if (touch.current === null) return;
+        const dx = e.changedTouches[0].clientX - touch.current;
+        touch.current = null;
+        if (Math.abs(dx) > 50) go(index + (dx < 0 ? 1 : -1));
+      }}
+    >
+      {slides.map((sl, i) => (
+        <Slide key={sl.series.id} {...sl} hello={hello} active={i === index} label={`${i + 1} sur ${count}`} />
+      ))}
+      {count > 1 && (
+        <>
+          <button className="car-arrow prev" onClick={() => go(index - 1)} aria-label="Série précédente"><Icon name="chevronLeft" size={22} /></button>
+          <button className="car-arrow next" onClick={() => go(index + 1)} aria-label="Série suivante"><Icon name="chevronRight" size={22} /></button>
+          <div className="car-dots" role="tablist" aria-label="Choisir une série">
+            {slides.map((sl, i) => (
+              <button key={sl.series.id} role="tab" aria-selected={i === index} aria-label={sl.series.title} className={i === index ? 'on' : ''}
+                onClick={() => go(i)} style={accentStyle(sl.series.accent)}>
+                {i === index && !paused && !reducedMotion() && <span style={{ animationDuration: `${SLIDE_MS}ms` }} />}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function Slide({ series, recent, hello, active, label }) {
+  // Fond : miniature 16:9 de l'episode en cours, sinon (sans affiche importee) la premiere miniature, nette ;
+  // une affiche importee (format portrait) est floutee.
+  const bg = recent?.thumb || (!series.has_custom_cover ? series.cover_url : null);
+  const eyebrow = recent ? (recent.watched ? 'Dernier épisode vu' : 'Reprendre où tu t\'es arrêté')
+    : series.new_count > 0 ? `${series.new_count} nouvel${series.new_count > 1 ? 's' : ''} épisode${series.new_count > 1 ? 's' : ''}` : 'À découvrir';
+  return (
+    <div className={`slide themed${active ? ' active' : ''}`} style={accentStyle(series.accent)} aria-hidden={!active}
+      role="group" aria-roledescription="diapositive" aria-label={`${series.title} (${label})`}>
       <div className="hero-media">
-        {bg ? <img className="hero-bg kenburns" src={bg} alt="" />
+        {bg ? <img className={`hero-bg${active ? ' kenburns' : ''}`} src={bg} alt="" />
           : series.cover_url && <img className="hero-bg blur" src={series.cover_url} alt="" />}
       </div>
       <div className="hero-shade" />
       <div className="hero-content">
         <span className="hello">{hello}</span>
-        <span className="eyebrow">{recent ? (recent.watched ? 'Dernier épisode vu' : 'Reprendre où tu t\'es arrêté') : 'À découvrir'}</span>
+        <span className="eyebrow">{eyebrow}</span>
         <h1>{series.title}</h1>
+        {(series.year || series.genres?.length > 0) && (
+          <div className="genres">
+            {series.year && <span className="genre">{series.year}</span>}
+            {series.genres?.slice(0, 3).map((g) => <span key={g} className="genre">{g}</span>)}
+          </div>
+        )}
         {series.description && <p className="hero-desc">{series.description}</p>}
         <div className="row-actions start">
           {recent
-            ? <Link className="button primary big-btn" to={`/regarder/${recent.episodeId}`}><Icon name="play" size={18} /> {recent.watched ? 'Revoir' : 'Reprendre'} · {recent.label}</Link>
-            : <Link className="button primary big-btn" to={`/serie/${series.id}`}><Icon name="play" size={18} /> Voir les épisodes</Link>}
-          {recent && <Link className="button glass big-btn" to={`/serie/${series.id}`}>Tous les épisodes</Link>}
+            ? <Link tabIndex={active ? 0 : -1} className="button primary big-btn" to={`/regarder/${recent.episodeId}`}><Icon name="play" size={18} /> {recent.watched ? 'Revoir' : 'Reprendre'} · {recent.label}</Link>
+            : <Link tabIndex={active ? 0 : -1} className="button primary big-btn" to={`/serie/${series.id}`}><Icon name="play" size={18} /> Voir les épisodes</Link>}
+          {recent && <Link tabIndex={active ? 0 : -1} className="button glass big-btn" to={`/serie/${series.id}`}>Tous les épisodes</Link>}
         </div>
       </div>
-    </section>
+    </div>
   );
 }
 

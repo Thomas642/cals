@@ -3,7 +3,8 @@ import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api, onUnauthorized } from './api.js';
 import { clearProgress, loadProgress } from './progress.js';
 import { setManage } from './manage.js';
-import { initSettings } from './settings.js';
+import { initSettings, useSettings } from './settings.js';
+import Seasonal, { currentSeason } from './components/Seasonal.jsx';
 import UploadTray from './components/UploadTray.jsx';
 import AccountMenu from './components/AccountMenu.jsx';
 import Logo from './components/Logo.jsx';
@@ -79,6 +80,10 @@ function Shell({ user, onLogout }) {
   const location = useLocation();
   const [scrolled, setScrolled] = useState(false);
   const isAdmin = user.role === 'admin';
+  const settings = useSettings();
+  const season = currentSeason();
+  // Decor de saison : jamais pendant la lecture d'un episode.
+  const showSeason = settings.seasonal !== false && !location.pathname.startsWith('/regarder');
   useEffect(() => { window.scrollTo(0, 0); }, [location.pathname]);
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -109,6 +114,7 @@ function Shell({ user, onLogout }) {
         <span>Pour regarder ensemble, en VOSTFR.</span>
       </footer>
       {isAdmin && <UploadTray />}
+      {showSeason && <Seasonal season={season} />}
     </div>
   );
 }
