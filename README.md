@@ -89,6 +89,21 @@ Lecteur maison, identique sur tous les navigateurs :
 - **Statistiques** (tableau de bord) : temps regardé et épisodes terminés par personne, épisodes les plus regardés,
   temps par série. Le temps compté est celui réellement passé à lire dans le lecteur.
 
+### Fiches AniList, couleur d'ambiance, aperçu au survol
+
+- **Fiche AniList** (mode gestion, page de la série) : recherche sur l'API publique AniList, puis import des genres
+  (traduits en français) et de l'année ; le synopsis (en anglais, nettoyé de ses notes de source) et l'affiche ne
+  sont repris que si tu coches les cases. Conditions d'utilisation de l'API consultées en novembre 2026 : gratuite
+  pour un usage non commercial ; interdite pour un service concurrent de liste/suivi, la collecte massive et le
+  stockage. Le site ne fait que des recherches ponctuelles, une fiche à la fois. Les conditions ne parlent pas des
+  images : une affiche importée reste la propriété de ses ayants droit. Le serveur doit pouvoir joindre
+  `graphql.anilist.co` et `s4.anilist.co`.
+- **Couleur d'ambiance** : teinte dominante de l'affiche (ou de la première miniature), calculée par ffmpeg puis
+  éclaircie pour le fond sombre. Elle colore les boutons, la barre de lecture, les reflets de la page série et le
+  contour des affiches. Le texte des boutons passe en sombre si le contraste avec le blanc est insuffisant.
+- **Aperçu au survol** : en passant la souris sur une miniature d'épisode, les images de l'épisode défilent
+  (planche d'aperçus du lecteur).
+
 ### Tableau de bord (administrateurs)
 
 Menu du compte > **Tableau de bord** (`/admin`), actualisé toutes les 10 secondes :
@@ -305,6 +320,8 @@ lectures (GET, sauf `/api/users` et `/api/storage`), à sa progression et à son
 | PUT / DELETE | /api/watchlist/:seriesId | Ma liste |
 | GET | /api/recent | Épisodes récemment ajoutés (avec `is_new` pour le compte) |
 | GET | /api/media/storyboard/:id | Planche d'aperçus |
+| GET | /api/admin/anilist/search?q= | Recherche AniList (administrateurs) |
+| POST | /api/series/:id/anilist | Import d'une fiche `{ id, description?, cover? }` |
 | PUT | /api/me/password | Changer son mot de passe `{ current, password }` |
 | GET | /api/progress | Progression de lecture du compte connecté |
 | PUT / DELETE | /api/progress/:episodeId | Position `{ pos, dur, watched? }` / remise à zéro |

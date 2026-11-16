@@ -102,3 +102,20 @@ export function friendlyError(err) {
   return e.length > 160 ? `${e.slice(0, 160)}…` : e;
 }
 
+
+/** Variables CSS de la couleur d'ambiance d'une serie (null : couleurs du site). */
+export function accentStyle(hex) {
+  if (!hex || !/^#[0-9a-f]{6}$/i.test(hex)) return undefined;
+  // Texte sur la couleur : blanc si le contraste atteint 4,5:1, sinon presque noir (couleurs claires : jaune...).
+  const lin = (c) => { const v = parseInt(c, 16) / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const lum = 0.2126 * lin(hex.slice(1, 3)) + 0.7152 * lin(hex.slice(3, 5)) + 0.0722 * lin(hex.slice(5, 7));
+  const onAccent = 1.05 / (lum + 0.05) >= 4.5 ? '#ffffff' : '#16121f';
+  return {
+    '--accent': hex,
+    '--on-accent': onAccent,
+    '--accent-soft': `${hex}26`,
+    '--grad-warm': `linear-gradient(135deg, ${hex}, color-mix(in srgb, ${hex} 60%, #ff8a5c))`,
+    '--grad': `linear-gradient(135deg, ${hex}, color-mix(in srgb, ${hex} 50%, #8b5cf6))`,
+    '--glow': `${hex}55`,
+  };
+}

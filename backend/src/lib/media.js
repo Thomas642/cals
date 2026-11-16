@@ -8,18 +8,23 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 
-function run(cmd, args, { onStdout, timeoutMs } = {}) {
+function run(cmd, args, { onStdout, timeoutMs, binary = false } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
+    const chunks = [];
     let err = '';
     const timer = timeoutMs ? setTimeout(() => child.kill('SIGKILL'), timeoutMs) : null;
-    child.stdout.on('data', (d) => { const s = d.toString(); if (onStdout) onStdout(s); else out += s; });
+    child.stdout.on('data', (d) => {
+      if (binary) { chunks.push(d); return; }
+      const s = d.toString();
+      if (onStdout) onStdout(s); else out += s;
+    });
     child.stderr.on('data', (d) => { err = (err + d.toString()).slice(-4000); });
     child.on('error', (e) => { clearTimeout(timer); reject(e); });
     child.on('close', (code) => {
       clearTimeout(timer);
-      if (code === 0) resolve(out);
+      if (code === 0) resolve(binary ? Buffer.concat(chunks) : out);
       else reject(Object.assign(new Error(`${cmd} a echoue (code ${code}) : ${err.trim().split('\n').slice(-3).join(' ')}`), { code }));
     });
   });
@@ -168,4 +173,50 @@ export async function extractStoryboard(input, output, { duration, width, height
 export async function extractSubtitle(input, streamIndex) {
   return run('ffmpeg', ['-hide_banner', '-nostdin', '-i', input, '-map', `0:${streamIndex}`, '-c:s', 'webvtt', '-f', 'webvtt', 'pipe:1'],
     { timeoutMs: 300000 });
+}
+
+/**
+ * Couleur d'ambiance d'une image : teinte dominante parmi les pixels assez colores (24x24 pixels analyses),
+ * ramenee a une luminosite lisible sur fond sombre. Retourne "#rrggbb" ou null (image grise).
+ */
+export async function dominantColor(imagePath) {
+  const raw = await run('ffmpeg', ['-hide_banner', '-nostdin', '-i', imagePath, '-vf', 'scale=24:24', '-frames:v', '1',
+    '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], { timeoutMs: 30000, binary: true });
+  const bins = Array.from({ length: 24 }, () => ({ w: 0, r: 0, g: 0, b: 0 }));
+  for (let i = 0; i + 2 < raw.length; i += 3) {
+    const [r, g, b] = [raw[i] / 255, raw[i + 1] / 255, raw[i + 2] / 255];
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    const d = max - min;
+    if (d === 0) continue;
+    const sat = d / (1 - Math.abs(2 * l - 1));
+    if (sat < 0.25 || l < 0.12 || l > 0.92) continue;
+    let h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    h = (h * 60 + 360) % 360;
+    const bin = bins[Math.floor(h / 15) % 24];
+    const w = sat * (1 - Math.abs(l - 0.5));
+    bin.w += w; bin.r += r * w; bin.g += g * w; bin.b += b * w;
+  }
+  const best = bins.reduce((a, c) => (c.w > a.w ? c : a));
+  if (best.w < 0.5) return null;
+  return readableAccent(best.r / best.w, best.g / best.w, best.b / best.w);
+}
+
+// Meme teinte, saturation et luminosite ajustees pour ressortir sur le fond sombre du site.
+export function readableAccent(r, g, b) {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  let h = 0;
+  if (d) h = (max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4) * 60;
+  h = (h + 360) % 360;
+  const l0 = (max + min) / 2;
+  const s0 = d ? d / (1 - Math.abs(2 * l0 - 1)) : 0;
+  const s = Math.min(0.85, Math.max(0.55, s0));
+  const l = 0.62;
+  const k = (n) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return `#${[f(0), f(8), f(4)].map((x) => Math.round(x * 255).toString(16).padStart(2, '0')).join('')}`;
 }

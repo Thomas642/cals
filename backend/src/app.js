@@ -7,7 +7,8 @@ import { pipeline } from 'node:stream/promises';
 import { ROLES, createAuth, hashPassword, validatePassword, validateUsername, verifyPassword } from './lib/auth.js';
 import { SUBTITLE_EXTENSIONS, toWebVtt } from './lib/subtitles.js';
 import { createProcessor } from './lib/processor.js';
-import { ffmpegAvailable } from './lib/media.js';
+import { dominantColor, ffmpegAvailable } from './lib/media.js';
+import { downloadImage, getAnime, searchAnime } from './lib/anilist.js';
 
 // Formats video acceptes et type MIME annonce au navigateur. Le MP4 (H.264 + AAC) est le plus
 // largement lisible ; MKV et MOV dependent du navigateur et des codecs du fichier.
@@ -85,7 +86,17 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
   const removeFile = (rel) => { if (rel) fs.rmSync(abs(rel), { force: true }); };
   const fileSize = (p) => { try { return fs.statSync(p).size; } catch { return 0; } };
   const uploading = new Map(); // episode -> requete dont un morceau est en cours de reception
-  const processor = createProcessor(db, { mediaDir, enabled: processing });
+  // Couleur d'ambiance de la serie : extraite de l'affiche importee, sinon de la premiere miniature.
+  async function refreshAccent(sid, { force = false } = {}) {
+    const s = db.prepare('SELECT * FROM series WHERE id = ?').get(sid);
+    if (!s || (s.accent && !force)) return;
+    const src = s.cover_file || db.prepare(`SELECT thumb_file FROM episode WHERE series_id = ? AND thumb_file IS NOT NULL
+      ORDER BY season, position IS NULL, position, number IS NULL, number, id LIMIT 1`).get(sid)?.thumb_file;
+    let accent = null;
+    if (src) { try { if (await ffmpegAvailable()) accent = await dominantColor(path.join(mediaDir, src)); } catch { accent = null; } }
+    db.prepare('UPDATE series SET accent = ? WHERE id = ?').run(accent, sid);
+  }
+  const processor = createProcessor(db, { mediaDir, enabled: processing, onThumbnail: (sid) => refreshAccent(sid) });
 
   function freeBytes() {
     try {
@@ -514,6 +525,30 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     res.json(seriesView(getSeries(sid)));
   });
 
+  // ---------- Fiches AniList (administrateurs) ----------
+  r.get('/admin/anilist/search', async (req, res) => {
+    const q = text(req.query.q, { field: 'Recherche', max: 120, required: true });
+    res.json(await searchAnime(q));
+  });
+
+  // Import d'une fiche : genres, annee, lien ; synopsis et affiche seulement si demandes.
+  r.post('/series/:id/anilist', async (req, res) => {
+    const s = getSeries(id(req.params.id));
+    if (!s) throw notFound('Serie');
+    const a = await getAnime(id(req.body?.id));
+    const fields = { anilist_id: a.id, genres: JSON.stringify(a.genres), year: a.year };
+    if (req.body?.description && a.description) fields.description = a.description;
+    if (req.body?.cover && a.cover) {
+      const file = saveImage(await downloadImage(a.cover));
+      removeFile(s.cover_file);
+      fields.cover_file = file;
+    }
+    const cols = Object.keys(fields);
+    db.prepare(`UPDATE series SET ${cols.map((c) => `${c} = @${c}`).join(', ')} WHERE id = @id`).run({ ...fields, id: s.id });
+    if (fields.cover_file) await refreshAccent(s.id, { force: true });
+    res.json(seriesView(getSeries(s.id)));
+  });
+
   // Generique d'ouverture : bornes en secondes ; null pour effacer.
   function introBody(b) {
     if (b?.start === null || b?.end === null) return { start: null, end: null };
@@ -559,14 +594,16 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     const file = saveImage(await readBody(req, MAX_COVER_BYTES));
     removeFile(s.cover_file);
     db.prepare('UPDATE series SET cover_file = ? WHERE id = ?').run(file, s.id);
+    await refreshAccent(s.id, { force: true });
     res.json(seriesView(getSeries(s.id)));
   });
 
-  r.delete('/series/:id/cover', (req, res) => {
+  r.delete('/series/:id/cover', async (req, res) => {
     const s = getSeries(id(req.params.id));
     if (!s) throw notFound('Serie');
     removeFile(s.cover_file);
     db.prepare('UPDATE series SET cover_file = NULL WHERE id = ?').run(s.id);
+    await refreshAccent(s.id, { force: true });
     res.json(seriesView(getSeries(s.id)));
   });
 
@@ -799,6 +836,10 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
   });
 
   app.locals.processor = processor;
+  // Au demarrage : couleur d'ambiance des series qui n'en ont pas encore.
+  app.locals.refreshAccents = async () => {
+    for (const { id: sid } of db.prepare('SELECT id FROM series WHERE accent IS NULL').all()) await refreshAccent(sid);
+  };
   app.use('/api', r);
   app.use('/api', (req, res) => res.status(404).json({ error: 'Route inconnue' }));
 
