@@ -281,3 +281,4 @@ video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 1.05em; li
 .watch-bar h1 { margin: 0 0 0.2rem; font-size: 1.3rem; }
 .watch-bar p { margin: 0; }
 @media (max-width: 640px) { .player { border-radius: 0; margin: 0 -16px; } h1 { font-size: 1.35rem; } }
+.boot-error { max-width: 440px; text-align: center; }

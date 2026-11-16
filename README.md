@@ -63,7 +63,18 @@ Les sous-titres intégrés à l'intérieur d'un fichier MKV ne sont pas lus : il
 Les vidéos partent par morceaux de 16 Mo (`PUT /api/episodes/:id/upload?offset=`). Après une coupure réseau,
 l'envoi reprend tout seul à partir du dernier octet reçu (6 essais). Si l'onglet a été fermé, l'épisode
 affiche « Envoi incomplet » avec un bouton pour reprendre en sélectionnant le même fichier.
-Si un proxy refuse les morceaux de 16 Mo (réponse 413), le site passe à des morceaux de 1 Mo, plus lents.
+Si un proxy refuse les morceaux de 16 Mo (réponse 413), le site passe à des morceaux de 2 Mo, plus lents.
+
+**Erreur 429 « Trop de requêtes »** : ce code ne vient pas de l'API (qui ne le renvoie qu'après des échecs de
+connexion, avec un message explicite). Il est renvoyé par un intermédiaire devant le site (Cloudflare ou nginx)
+qui limite le nombre de requêtes ; l'envoi d'une vidéo en fait une par morceau. Le site attend alors
+(en-tête `Retry-After` s'il est fourni, sinon 60 s et plus) et reprend tout seul, y compris au chargement
+de la page. Pour l'éviter :
+- relever la limite du nginx de l'hôte (commande plus bas) : les morceaux passent de 2 Mo à 16 Mo,
+  soit 8 fois moins de requêtes ;
+- voir dans Cloudflare > Security > Events (ou Analytics) quelle règle a renvoyé le 429, et l'assouplir
+  ou l'exclure pour le chemin `/api/episodes/` ;
+- `curl -sI https://gameone-val.com/api/health` : un en-tête `server: cloudflare` indique que Cloudflare est devant.
 
 Taille maximale d'une vidéo : 20 Go (`MAX_VIDEO_GB` dans `.env`). L'import est refusé s'il ne reste pas
 assez d'espace disque sur le serveur (taille du fichier + 512 Mo).
@@ -100,7 +111,7 @@ bash ~/cals/deploy/update.sh
 - Les clés `GEMINI_*` / `ANTHROPIC_*` de `.env` ne servent plus et peuvent être retirées.
 
 **nginx de l'hôte (mode nginx)** : `update.sh` ne modifie pas `/etc/nginx/sites-available/cals`, qui
-limite les requêtes à 2 Mo. Le site fonctionne quand même (morceaux de 1 Mo), mais pour des envois plus
+limite les requêtes à 2 Mo. Le site fonctionne quand même (morceaux de 2 Mo, 8 fois plus de requêtes), mais pour des envois plus
 rapides et une lecture en flux direct :
 
 ```bash
