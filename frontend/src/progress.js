@@ -8,6 +8,7 @@ const SEND_EVERY_MS = 10000;
 const listeners = new Set();
 let cache = {};          // episodeId -> { pos, dur, watched, at, seriesId, seriesTitle, label, thumb }
 const lastSent = new Map();
+const pendingDelta = new Map(); // secondes regardees pas encore envoyees, par episode
 
 function emit() {
   cache = { ...cache };
@@ -39,11 +40,14 @@ const isWatched = (pos, dur) => dur > 0 && (pos / dur > 0.95 || (dur > 600 && du
 
 function send(episodeId, body) {
   lastSent.set(episodeId, Date.now());
-  api.send('PUT', `/progress/${episodeId}`, body).catch(() => {});
+  const delta = Math.round((pendingDelta.get(episodeId) || 0) * 10) / 10;
+  pendingDelta.delete(episodeId);
+  api.send('PUT', `/progress/${episodeId}`, { ...body, delta }).catch(() => {});
 }
 
 /** Enregistre la position. info : { seriesId, seriesTitle, label, thumb }. force : envoi immediat (pause, sortie). */
-export function recordProgress(episodeId, pos, dur, info, { force = false } = {}) {
+export function recordProgress(episodeId, pos, dur, info, { force = false, delta = 0 } = {}) {
+  if (delta > 0) pendingDelta.set(episodeId, (pendingDelta.get(episodeId) || 0) + delta);
   const watched = isWatched(pos, dur);
   const prev = cache[episodeId] || {};
   cache[episodeId] = { ...prev, ...info, pos: watched ? 0 : Math.floor(pos), dur: Math.floor(dur || prev.dur || 0), watched: watched || !!prev.watched, at: Date.now() };
@@ -51,10 +55,18 @@ export function recordProgress(episodeId, pos, dur, info, { force = false } = {}
   if (force || watched || Date.now() - (lastSent.get(episodeId) || 0) > SEND_EVERY_MS) send(episodeId, { pos, dur });
 }
 
-export function markWatched(episodeId, dur, info) {
-  cache[episodeId] = { ...(cache[episodeId] || {}), ...info, pos: 0, dur: Math.floor(dur || 0), watched: true, at: Date.now() };
+/** Fin de lecture (manual = false) ou « marquer comme vu » a la main (manual = true). */
+export function markWatched(episodeId, dur, info, { manual = false } = {}) {
+  cache[episodeId] = { ...(cache[episodeId] || {}), ...info, pos: 0, dur: Math.floor(dur || cache[episodeId]?.dur || 0), watched: true, at: Date.now() };
   emit();
-  send(episodeId, { pos: dur || 0, dur: dur || 0, watched: true });
+  send(episodeId, { pos: dur || 0, dur: dur || 0, watched: true, manual });
+}
+
+/** « Marquer comme non vu » : efface la progression de l'episode pour ce compte. */
+export function markUnwatched(episodeId) {
+  delete cache[episodeId];
+  emit();
+  api.send('DELETE', `/progress/${episodeId}`).catch(() => {});
 }
 
 export const progressOf = (episodeId) => cache[episodeId] || null;

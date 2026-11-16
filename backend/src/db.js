@@ -33,4 +33,19 @@ function migrate(db) {
   for (const [col, type] of [['processing', 'TEXT'], ['processing_progress', 'REAL'], ['processing_error', 'TEXT'], ['media_info', 'TEXT']]) {
     if (!has('episode', col)) db.exec(`ALTER TABLE episode ADD COLUMN ${col} ${type}`);
   }
+  // Lecteur, saisons, nouveautes, fiches, statistiques.
+  const added = [
+    ['series', 'intro_start', 'REAL'], ['series', 'intro_end', 'REAL'], ['series', 'accent', 'TEXT'],
+    ['series', 'season_names', 'TEXT'], ['series', 'anilist_id', 'INTEGER'], ['series', 'genres', 'TEXT'], ['series', 'year', 'INTEGER'],
+    ['episode', 'season', 'INTEGER NOT NULL DEFAULT 1'], ['episode', 'position', 'REAL'],
+    ['episode', 'intro_start', 'REAL'], ['episode', 'intro_end', 'REAL'],
+    ['episode', 'storyboard_file', 'TEXT'], ['episode', 'storyboard', 'TEXT'], ['episode', 'ready_at', 'TEXT'],
+    ['app_user', 'settings', 'TEXT'], ['app_user', 'last_visit_at', 'TEXT'], ['app_user', 'prev_visit_at', 'TEXT'],
+    ['watch_progress', 'seconds_watched', 'REAL NOT NULL DEFAULT 0'], ['watch_progress', 'completions', 'INTEGER NOT NULL DEFAULT 0'],
+  ];
+  for (const [table, col, type] of added) {
+    if (!has(table, col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+  }
+  db.exec("UPDATE episode SET ready_at = created_at WHERE ready_at IS NULL AND status = 'ready'");
+  db.exec('UPDATE watch_progress SET completions = 1 WHERE watched = 1 AND completions = 0');
 }

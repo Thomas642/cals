@@ -6,6 +6,7 @@
 // - miniature extraite a 25 % de la duree ;
 // - extraction des sous-titres texte integres (ASS, SRT...) en WebVTT.
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 
 function run(cmd, args, { onStdout, timeoutMs } = {}) {
   return new Promise((resolve, reject) => {
@@ -93,6 +94,8 @@ export function plan(info) {
     audio: audio ? audio.codec_name : null,
     audioIndex: audio ? audio.index : null,
     videoIndex: video.index,
+    width: video.width,
+    height: video.height,
     audioCopy: audioOk,
   };
 }
@@ -131,7 +134,34 @@ export async function convert(input, output, p, onProgress) {
 /** Extrait une image JPEG (largeur 640) a la position donnee, en secondes. */
 export async function extractThumbnail(input, output, atSeconds) {
   await run('ffmpeg', ['-hide_banner', '-nostdin', '-y', '-ss', String(Math.max(0, atSeconds)), '-i', input,
-    '-frames:v', '1', '-vf', 'scale=640:-2', '-q:v', '4', output], { timeoutMs: 120000 });
+    '-frames:v', '1', '-update', '1', '-vf', 'scale=640:-2', '-q:v', '4', output], { timeoutMs: 120000 });
+  // Meme piege : position au-dela de la fin -> rien d'ecrit, sans erreur.
+  try { if (fs.statSync(output).size > 0) return; } catch { /* absent */ }
+  throw new Error('ffmpeg n\'a produit aucune miniature');
+}
+
+/**
+ * Planche d'apercus (storyboard) : jusqu'a 150 images de 160 px reparties sur la duree, en grille de 10 colonnes.
+ * Sert a l'apercu sur la barre de temps du lecteur et a l'apercu anime au survol d'un episode.
+ * Seules les images cles sont decodees (-skip_frame nokey) : rapide, precision de quelques secondes.
+ */
+export async function extractStoryboard(input, output, { duration, width, height }) {
+  if (!(duration > 0) || !width || !height) throw new Error('duree ou dimensions inconnues');
+  const count = Math.min(150, Math.max(10, Math.floor(duration / 10)));
+  const interval = duration / count;
+  const w = 160;
+  const h = Math.max(2, Math.round((w * height) / width / 2) * 2);
+  const cols = 10;
+  const rows = Math.ceil(count / cols);
+  const args = (fast) => ['-hide_banner', '-nostdin', '-y', ...(fast ? ['-skip_frame', 'nokey'] : []), '-i', input,
+    '-vf', `fps=1/${interval.toFixed(3)},scale=${w}:${h},tile=${cols}x${rows}`, '-frames:v', '1', '-update', '1', '-q:v', '5', output];
+  const written = () => { try { return fs.statSync(output).size > 0; } catch { return false; } };
+  // Passe rapide (images cles seulement). ffmpeg peut alors ne rien ecrire sans signaler d'erreur
+  // (video avec tres peu d'images cles) : on refait alors une passe complete.
+  await run('ffmpeg', args(true), { timeoutMs: 600000 });
+  if (!written()) await run('ffmpeg', args(false), { timeoutMs: 1800000 });
+  if (!written()) throw new Error('ffmpeg n\'a produit aucune image');
+  return { interval, count, cols, rows, w, h };
 }
 
 /** Extrait une piste de sous-titres texte integree, convertie en WebVTT par ffmpeg. */
