@@ -25,14 +25,24 @@ export function guessEpisodeNumber(name) {
   return nums ? Number(nums[nums.length - 1]) : null;
 }
 
-/** Langue devinee depuis le nom (ex. "ep01.fr.srt", "ep01_eng.ass"). Francais par defaut. */
+/**
+ * Langue devinee depuis le DERNIER mot du nom (ex. "ep01.fr.srt", "ep01_eng.ass", "ep01 [ja].srt").
+ * Un mot comme "JP" ailleurs dans le nom ("ARC 01 - EP 1 - JP - FR.srt") designe souvent l'audio : ignore.
+ * Francais par defaut.
+ */
 export function guessSubtitleLang(name) {
-  const tokens = name.toLowerCase().replace(/\.[^.]+$/, '').split(/[^a-z]+/);
-  const has = (...t) => t.some((x) => tokens.includes(x));
-  if (has('en', 'eng', 'english')) return { lang: 'en', label: 'English' };
-  if (has('ja', 'jp', 'jpn', 'japanese')) return { lang: 'ja', label: '日本語' };
+  const tokens = name.toLowerCase().replace(/\.[^.]+$/, '').split(/[^a-z]+/).filter(Boolean);
+  const last = tokens[tokens.length - 1];
+  if (['en', 'eng', 'english'].includes(last)) return { lang: 'en', label: 'English' };
+  if (['ja', 'jpn', 'japanese'].includes(last)) return { lang: 'ja', label: '日本語' };
   return { lang: 'fr', label: 'Français' };
 }
+
+export const SUBTITLE_LANGS = [
+  { lang: 'fr', label: 'Français' },
+  { lang: 'en', label: 'English' },
+  { lang: 'ja', label: '日本語' },
+];
 
 /** Lit un fichier texte en UTF-8, UTF-16 (BOM) ou, a defaut, Windows-1252 (anciens SRT francais). */
 export async function readTextFile(file) {

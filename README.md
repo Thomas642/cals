@@ -56,7 +56,8 @@ au moment de l'import (ou à la première visite de la série pour les épisodes
 sait pas décoder la vidéo, l'épisode garde une vignette colorée. L'affiche de la série est l'image choisie avec
 « Choisir une affiche » (JPEG, PNG ou WebP, 8 Mo maximum), sinon la miniature du premier épisode.
 
-**Langue de la piste** : `.fr.`, `.en.`/`.eng.`, `.ja.`/`.jpn.` dans le nom du fichier ; français par défaut.
+**Langue de la piste** : lue dans le dernier mot du nom (`ep01.fr.srt`, `ep01_eng.ass`, `ep01.ja.srt`) ; français
+par défaut. Un « JP » ailleurs dans le nom (`ARC 01 - EP 1 - JP.srt`) est ignoré.
 
 ### Formats
 
@@ -65,7 +66,26 @@ sait pas décoder la vidéo, l'épisode garde une vignette colorée. L'affiche d
 | Vidéo | mp4, m4v, webm, mkv, mov | Le navigateur lit la vidéo telle quelle (pas de conversion sur le serveur). **MP4 avec vidéo H.264 et son AAC** est le format le plus compatible. Les MKV et les vidéos HEVC/H.265 ne sont pas lus par tous les navigateurs : le lecteur affiche un message dans ce cas. |
 | Sous-titres | srt, vtt, ass, ssa | Convertis en WebVTT à l'import. Pour ASS/SSA, seul le texte est gardé (styles, positions et effets ignorés). Encodages lus : UTF-8, UTF-16, et Windows-1252 en repli (anciens SRT français). |
 
-Les sous-titres intégrés à l'intérieur d'un fichier MKV ne sont pas lus : il faut les importer comme fichier séparé.
+### Conversion automatique (ffmpeg)
+
+Après chaque envoi, le serveur analyse la vidéo avec ffmpeg (installé dans l'image du backend) :
+
+- **Vidéo illisible par les navigateurs** (HEVC/H.265, H.264 10 bits, AV1, MPEG-4…) : conversion en MP4
+  H.264 8 bits + AAC. Symptôme avant conversion : le son est lu mais l'image reste noire.
+- **Seuls le conteneur ou l'audio posent problème** (MKV, audio FLAC/AC3/DTS, piste japonaise pas en premier) :
+  les flux sont recopiés dans un MP4, sans réencoder la vidéo (rapide).
+- **Miniature** : une image extraite à 25 % de la durée, même si le navigateur ne sait pas lire la vidéo.
+- **Sous-titres texte intégrés** (ASS, SRT… dans un MKV) : ajoutés comme pistes « (intégré) ». Les sous-titres
+  en image (PGS, VobSub) ne sont pas extraits.
+
+Une vidéo à la fois, en priorité basse (`nice`) pour garder le site réactif. La durée dépend du processeur du
+serveur et de la vidéo ; la progression s'affiche sur l'épisode et dans le lecteur, qui se recharge tout seul à la
+fin. L'original est remplacé par la version convertie. Au démarrage, les épisodes jamais analysés (ceux importés
+avant cette fonction) sont mis en file automatiquement. Réglages dans `.env` : `VIDEO_PROCESSING=off` désactive,
+`X264_PRESET` / `X264_CRF` règlent la conversion. La conversion demande de l'espace libre : environ 1,6 fois la
+taille du fichier.
+
+**Langue d'une piste** : en mode Gérer, le petit sélecteur (FR / EN / JA) sur la piste la corrige.
 
 ### Envoi des vidéos
 
@@ -213,7 +233,8 @@ Toutes les routes sauf `/api/health` et `/api/auth/*` exigent une session.
 | PUT | /api/episodes/:id/thumbnail | Miniature (corps brut JPEG/PNG/WebP, 2 Mo max) |
 | PUT / DELETE | /api/series/:id/cover | Affiche de la série (corps brut, 8 Mo max) / retour à la miniature |
 | POST | /api/episodes/:id/subtitles | `{ filename, content, label?, lang? }`, converti en WebVTT |
-| DELETE | /api/subtitles/:id | Suppression d'une piste |
+| PUT / DELETE | /api/subtitles/:id | Nom et langue `{ label, lang }` / suppression d'une piste |
+| POST | /api/episodes/:id/process | Relance l'analyse et la conversion |
 | GET | /api/media/video/:id | Lecture de la vidéo (requêtes partielles `Range`) |
 | GET | /api/media/subtitle/:id | Piste WebVTT |
 | GET | /api/media/thumb/:id, /api/media/cover/:id | Miniature, affiche |

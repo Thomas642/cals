@@ -17,7 +17,11 @@ CREATE TABLE IF NOT EXISTS episode (
   video_mime    TEXT,
   video_size    INTEGER NOT NULL DEFAULT 0, -- taille annoncee a la creation
   status        TEXT NOT NULL DEFAULT 'uploading' CHECK (status IN ('uploading', 'ready')),
-  thumb_file    TEXT,                       -- miniature JPEG capturee par le navigateur
+  thumb_file    TEXT,                       -- miniature JPEG (ffmpeg ou navigateur)
+  processing    TEXT,                       -- traitement ffmpeg : queued | running | done | failed
+  processing_progress REAL,
+  processing_error    TEXT,
+  media_info    TEXT,                       -- resume JSON de l'analyse (codecs, action, duree)
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

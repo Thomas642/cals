@@ -4,12 +4,11 @@ import { api } from '../api.js';
 import { useApi } from '../hooks.js';
 import { enqueueUpload, useUploads } from '../uploads.js';
 import {
-  SUBTITLE_EXT, VIDEO_EXT, episodeLabel, formatBytes, guessEpisodeNumber, guessSubtitleLang,
+  SUBTITLE_EXT, SUBTITLE_LANGS, VIDEO_EXT, episodeLabel, formatBytes, guessEpisodeNumber, guessSubtitleLang,
   isSubtitle, isVideo, readTextFile,
 } from '../files.js';
 import { nextToWatch, progressOf, useProgress } from '../progress.js';
 import { useManage } from '../manage.js';
-import { fillMissingThumbnails } from '../thumbs.js';
 import Icon from '../components/Icon.jsx';
 import Poster from '../components/Poster.jsx';
 import Thumb from '../components/Thumb.jsx';
@@ -34,12 +33,14 @@ async function putImage(path, file) {
 
 export default function Series() {
   const { id } = useParams();
-  const { data: series, error } = useApi(`/series/${id}`);
+  const [poll, setPoll] = useState(false);
+  const { data: series, error } = useApi(`/series/${id}`, { refreshMs: poll ? 4000 : 0 });
   const manage = useManage();
   const jobs = useUploads();
   useProgress();
 
-  useEffect(() => { if (series) fillMissingThumbnails(series.episodes); }, [series]);
+  // Pendant une conversion, la page se rafraichit toute seule (progression, miniature, pistes extraites).
+  useEffect(() => { setPoll(!!series?.episodes.some((e) => isProcessing(e))); }, [series]);
 
   if (error) return <><BackLink /><p className="alert">{error.message}</p></>;
   if (!series) return <><BackLink /><div className="series-hero sk-block" /></>;
@@ -92,6 +93,64 @@ export default function Series() {
         )}
       </section>
     </>
+  );
+}
+
+const isProcessing = (e) => e.processing === 'queued' || e.processing === 'running';
+const needsConversion = (e) => isProcessing(e) && e.media?.action && e.media.action !== 'none';
+
+/** Etat du traitement serveur (analyse / conversion) d'un episode en ligne. */
+function ProcessingInfo({ episode: e, manage }) {
+  const [busy, setBusy] = useState(false);
+  const pct = Math.floor((e.processing_progress || 0) * 100);
+  async function retry() {
+    setBusy(true);
+    try { await api.post(`/episodes/${e.id}/process`); } catch (err) { window.alert(err.message); } finally { setBusy(false); }
+  }
+  if (e.processing === 'failed') {
+    if (!manage) return null;
+    return (
+      <div className="processing failed small">
+        Conversion impossible : {e.processing_error}{' '}
+        <button className="link" onClick={retry} disabled={busy}>Réessayer</button>
+      </div>
+    );
+  }
+  if (!isProcessing(e)) return null;
+  const converting = e.media?.action && e.media.action !== 'none';
+  return (
+    <div className="processing small">
+      <div className="progress"><span style={{ width: `${converting ? pct : 0}%` }} /></div>
+      <span className="muted">
+        {e.processing === 'queued' ? 'En attente de traitement…'
+          : converting ? `Préparation pour le navigateur : ${pct} %${manage && e.media?.reason ? ` (${e.media.reason})` : ''}`
+            : 'Analyse de la vidéo…'}
+      </span>
+    </div>
+  );
+}
+
+/** Piste de sous-titres ; en mode gestion, la langue se change et la piste se supprime. */
+function SubtitleTag({ sub: s, manage, onRemove }) {
+  const [error, setError] = useState(null);
+  async function changeLang(lang) {
+    const known = SUBTITLE_LANGS.find((l) => l.lang === lang);
+    const wasDefaultLabel = SUBTITLE_LANGS.some((l) => l.label === s.label);
+    try {
+      await api.put(`/subtitles/${s.id}`, { lang, label: wasDefaultLabel && known ? known.label : s.label });
+    } catch (err) { setError(err.message); }
+  }
+  if (!manage) return <span className="tag" title={s.original_name}><Icon name="captions" size={13} /> {s.label}</span>;
+  return (
+    <span className="tag" title={error || s.original_name}>
+      <Icon name="captions" size={13} /> {s.label}
+      <select className="tag-lang" value={SUBTITLE_LANGS.some((l) => l.lang === s.lang) ? s.lang : ''} onChange={(ev) => changeLang(ev.target.value)}
+        aria-label={`Langue de la piste ${s.label}`}>
+        {!SUBTITLE_LANGS.some((l) => l.lang === s.lang) && <option value="">{s.lang}</option>}
+        {SUBTITLE_LANGS.map((l) => <option key={l.lang} value={l.lang}>{l.lang.toUpperCase()}</option>)}
+      </select>
+      <button className="tag-x" onClick={onRemove} aria-label={`Supprimer la piste ${s.label}`}><Icon name="close" size={11} /></button>
+    </span>
   );
 }
 
@@ -338,12 +397,8 @@ function EpisodeRow({ episode: e, series, manage, job }) {
           <>
             {ready ? <Link to={`/regarder/${e.id}`} className="episode-title">{episodeLabel(e)}</Link> : <span className="episode-title">{episodeLabel(e)}</span>}
             <div className="episode-meta">
-              {e.subtitles.map((s) => (
-                <span key={s.id} className="tag" title={s.original_name}>
-                  <Icon name="captions" size={13} /> {s.label}
-                  {manage && <button className="tag-x" onClick={() => removeSubtitle(s)} aria-label={`Supprimer la piste ${s.label}`}><Icon name="close" size={11} /></button>}
-                </span>
-              ))}
+              {needsConversion(e) && !manage && <span className="tag info">En préparation…</span>}
+              {e.subtitles.map((s) => <SubtitleTag key={s.id} sub={s} manage={manage} onRemove={() => removeSubtitle(s)} />)}
               {e.subtitles.length === 0 && ready && <span className="tag warn">Sans sous-titres</span>}
               {manage && <span className="muted small file-name" title={e.original_name}>{formatBytes(e.video_size)} · {e.original_name}</span>}
             </div>
@@ -363,6 +418,7 @@ function EpisodeRow({ episode: e, series, manage, job }) {
             )}
           </div>
         )}
+        {ready && <ProcessingInfo episode={e} manage={manage} />}
         {error && <p className="alert small">{error}</p>}
       </div>
 

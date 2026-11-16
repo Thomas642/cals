@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { createAuth } from './lib/auth.js';
 import { SUBTITLE_EXTENSIONS, toWebVtt } from './lib/subtitles.js';
+import { createProcessor } from './lib/processor.js';
 
 // Formats video acceptes et type MIME annonce au navigateur. Le MP4 (H.264 + AAC) est le plus
 // largement lisible ; MKV et MOV dependent du navigateur et des codecs du fichier.
@@ -61,7 +62,8 @@ function episodeNumber(value) {
 const extensionOf = (filename) => path.extname(String(filename || '')).slice(1).toLowerCase();
 
 export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(process.cwd(), 'data', 'media'),
-  maxVideoBytes = (Number(process.env.MAX_VIDEO_GB) || 20) * 1024 ** 3 } = {}) {
+  maxVideoBytes = (Number(process.env.MAX_VIDEO_GB) || 20) * 1024 ** 3,
+  processing = process.env.VIDEO_PROCESSING !== 'off' } = {}) {
   fs.mkdirSync(path.join(mediaDir, 'videos'), { recursive: true });
   fs.mkdirSync(path.join(mediaDir, 'subtitles'), { recursive: true });
   fs.mkdirSync(path.join(mediaDir, 'images'), { recursive: true });
@@ -69,6 +71,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
   const removeFile = (rel) => { if (rel) fs.rmSync(abs(rel), { force: true }); };
   const fileSize = (p) => { try { return fs.statSync(p).size; } catch { return 0; } };
   const uploading = new Map(); // episode -> requete dont un morceau est en cours de reception
+  const processor = createProcessor(db, { mediaDir, enabled: processing });
 
   function freeBytes() {
     try {
@@ -88,6 +91,12 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     return {
       id: e.id, series_id: e.series_id, number: e.number, title: e.title, original_name: e.original_name,
       video_mime: e.video_mime, video_size: e.video_size, status: e.status, received, created_at: e.created_at,
+      processing: e.processing,
+      processing_progress: processor.progressOf(e.id) ?? e.processing_progress,
+      processing_error: e.processing_error,
+      media: e.media_info ? JSON.parse(e.media_info) : null,
+      // Version dans l'URL : apres une conversion, le navigateur ne reutilise pas l'ancienne video en cache.
+      video_url: e.status === 'ready' ? `/api/media/video/${e.id}?v=${path.basename(e.video_file, path.extname(e.video_file)).slice(0, 8)}` : null,
       thumb_url: e.thumb_file ? `/api/media/thumb/${e.id}?v=${path.basename(e.thumb_file, path.extname(e.thumb_file)).slice(0, 8)}` : null,
       subtitles: subtitlesOf(e.id),
     };
@@ -317,6 +326,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     if (now === e.video_size) {
       fs.renameSync(part, abs(e.video_file));
       db.prepare("UPDATE episode SET status = 'ready' WHERE id = ?").run(e.id);
+      processor.enqueue(e.id);
     }
     res.json({ received: now, status: now === e.video_size ? 'ready' : 'uploading' });
   });
@@ -340,6 +350,26 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     const info = db.prepare('INSERT INTO subtitle (episode_id, label, lang, original_name, file) VALUES (?, ?, ?, ?, ?)')
       .run(e.id, label, lang, filename, file);
     res.status(201).json(db.prepare('SELECT id, label, lang, original_name, created_at FROM subtitle WHERE id = ?').get(info.lastInsertRowid));
+  });
+
+  // Relance du traitement (apres un echec, ou pour reanalyser).
+  r.post('/episodes/:id/process', (req, res) => {
+    const e = getEpisode(id(req.params.id));
+    if (!e) throw notFound('Episode');
+    if (e.status !== 'ready') throw httpError(409, 'La video n\'est pas encore entierement envoyee');
+    if (!processing) throw httpError(503, 'Traitement video desactive sur ce serveur (VIDEO_PROCESSING=off)');
+    processor.retry(e.id);
+    res.json(episodeView(getEpisode(e.id)));
+  });
+
+  r.put('/subtitles/:id', (req, res) => {
+    const s = db.prepare('SELECT * FROM subtitle WHERE id = ?').get(id(req.params.id));
+    if (!s) throw notFound('Sous-titre');
+    const label = text(req.body?.label, { field: 'Nom de la piste', max: 80, required: true });
+    const lang = (text(req.body?.lang, { field: 'Langue', max: 12, required: true })).toLowerCase();
+    if (!/^[a-z]{2,3}(-[a-z0-9]{2,8})?$/.test(lang)) throw httpError(400, 'Code de langue invalide (ex. fr, ja, en)');
+    db.prepare('UPDATE subtitle SET label = ?, lang = ? WHERE id = ?').run(label, lang, s.id);
+    res.json(db.prepare('SELECT id, label, lang, original_name, created_at FROM subtitle WHERE id = ?').get(s.id));
   });
 
   r.delete('/subtitles/:id', (req, res) => {
@@ -389,6 +419,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     });
   });
 
+  app.locals.processor = processor;
   app.use('/api', r);
   app.use('/api', (req, res) => res.status(404).json({ error: 'Route inconnue' }));
 
