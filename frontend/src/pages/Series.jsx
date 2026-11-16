@@ -5,7 +5,7 @@ import { useApi } from '../hooks.js';
 import { enqueueUpload, useUploads } from '../uploads.js';
 import {
   SUBTITLE_EXT, SUBTITLE_LANGS, VIDEO_EXT, episodeLabel, formatBytes, guessEpisodeNumber, guessSeason, guessSubtitleLang,
-  accentStyle, friendlyError, isSubtitle, isVideo, readTextFile, seasonName,
+  accentStyle, addedLabel, formatDurationShort, friendlyError, isSubtitle, isVideo, readTextFile, seasonName,
 } from '../files.js';
 import { markUnwatched, markWatched, nextToWatch, progressOf, useProgress } from '../progress.js';
 import { useManage } from '../manage.js';
@@ -101,7 +101,8 @@ export default function Series({ user }) {
       <section className="series-hero">
         {/* Fond net : image de l'episode a lancer ; sinon l'affiche floutee. */}
         <div className="hero-media">
-          {(next?.episode.thumb_url || ready.find((e) => e.thumb_url)?.thumb_url)
+          {series.banner_url ? <img className="hero-bg banner kenburns" src={series.banner_url} alt="" />
+            : (next?.episode.thumb_url || ready.find((e) => e.thumb_url)?.thumb_url)
             ? <img className="hero-bg kenburns" src={next?.episode.thumb_url || ready.find((e) => e.thumb_url).thumb_url} alt="" />
             : series.cover_url && <img className="hero-bg blur" src={series.cover_url} alt="" />}
         </div>
@@ -112,6 +113,7 @@ export default function Series({ user }) {
             <Poster series={series} className="hero-poster" />
             <div className="series-hero-text">
               <h1>{series.title}</h1>
+              {series.title_native && <p className="native-title" lang="ja">{series.title_native}</p>}
               <p className="meta">
                 {series.year && <>{series.year} · </>}
                 {ready.length} épisode{ready.length > 1 ? 's' : ''}
@@ -355,6 +357,7 @@ function ManagePanel({ series }) {
           <button className="ghost-btn" onClick={() => setAnilist(!anilist)}><Icon name="sparkle" size={16} /> Fiche AniList</button>
           <button className="ghost-btn" onClick={() => coverInput.current?.click()}><Icon name="library" size={16} /> {series.has_custom_cover ? 'Changer l\'affiche' : 'Choisir une affiche'}</button>
           {series.has_custom_cover && <button className="ghost-btn" onClick={removeCover}>Retirer l'affiche</button>}
+          {series.banner_url && <button className="ghost-btn" onClick={async () => { try { await api.del(`/series/${series.id}/banner`); } catch (err) { setError(err.message); } }}>Retirer la bannière</button>}
           <button className="ghost-btn danger" onClick={removeSeries}><Icon name="trash" size={16} /> Supprimer la série</button>
           <input ref={coverInput} type="file" hidden accept="image/jpeg,image/png,image/webp"
             onChange={(e) => { changeCover(e.target.files[0]); e.target.value = ''; }} />
@@ -399,6 +402,7 @@ function AniListPanel({ series, onClose }) {
   const [picked, setPicked] = useState(null);
   const [useDesc, setUseDesc] = useState(!series.description);
   const [useCover, setUseCover] = useState(false);
+  const [useBanner, setUseBanner] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -412,7 +416,7 @@ function AniListPanel({ series, onClose }) {
   async function importIt() {
     setBusy(true); setError(null);
     try {
-      await api.post(`/series/${series.id}/anilist`, { id: picked.id, description: useDesc, cover: useCover });
+      await api.post(`/series/${series.id}/anilist`, { id: picked.id, description: useDesc, cover: useCover, banner: useBanner });
       onClose();
     } catch (err) { setError(err.message); setBusy(false); }
   }
@@ -451,6 +455,9 @@ function AniListPanel({ series, onClose }) {
             {picked.description && <p className="small pick-desc">{picked.description}</p>}
             <label className="check"><input type="checkbox" checked={useDesc} onChange={(e) => setUseDesc(e.target.checked)} disabled={!picked.description} /> Remplacer la description par ce synopsis (en anglais, modifiable ensuite)</label>
             <label className="check"><input type="checkbox" checked={useCover} onChange={(e) => setUseCover(e.target.checked)} disabled={!picked.cover} /> Utiliser cette affiche (l'image reste la propriété de ses ayants droit)</label>
+            <label className="check"><input type="checkbox" checked={useBanner} onChange={(e) => setUseBanner(e.target.checked)} disabled={!picked.banner} /> Utiliser la bannière en fond de page{picked.banner ? '' : ' (aucune bannière sur AniList)'}</label>
+            {picked.banner && <img className="banner-preview" src={picked.banner} alt="" referrerPolicy="no-referrer" />}
+            {picked.native && <p className="muted small">Titre japonais : <span lang="ja">{picked.native}</span> (importé avec les genres)</p>}
             <p className="muted small">Les genres et l'année sont toujours importés.</p>
             <div className="row-actions start">
               <button className="primary" onClick={importIt} disabled={busy}>{busy ? <span className="spinner" /> : <Icon name="check" size={16} />} Importer</button>
@@ -561,7 +568,8 @@ function EpisodeRow({ episode: e, series, manage, job, dragging, onDragStart, on
     else uploadText = `Envoi : ${pct} % · ${formatBytes(job.sent)} / ${formatBytes(job.size)}`;
   }
 
-  const thumb = <Thumb src={e.thumb_url} seed={series.title} number={e.number} progress={progress} watched={progress?.watched} playable={ready} storyboard={e.storyboard} />;
+  const thumb = <Thumb src={e.thumb_url} seed={series.title} number={e.number} progress={progress} watched={progress?.watched} playable={ready} storyboard={e.storyboard} duration={e.duration} />;
+  const remaining = progress && !progress.watched && progress.dur ? Math.max(1, Math.round((progress.dur - progress.pos) / 60)) : null;
   const dnd = manage && !editing ? {
     draggable: true,
     onDragStart: (ev) => { ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', String(e.id)); onDragStart?.(); },
@@ -601,7 +609,16 @@ function EpisodeRow({ episode: e, series, manage, job, dragging, onDragStart, on
         ) : (
           <>
             <div className="episode-title-row">
-              {ready ? <Link to={`/regarder/${e.id}`} className="episode-title">{episodeLabel(e)}</Link> : <span className="episode-title">{episodeLabel(e)}</span>}
+              <span className="ep-num">{e.number !== null && e.number !== undefined ? String(e.number).replace('.', ',') : '•'}</span>
+              <div className="ep-titles">
+                {ready
+                  ? <Link to={`/regarder/${e.id}`} className="episode-title">{e.title || episodeLabel({ number: e.number })}</Link>
+                  : <span className="episode-title">{e.title || episodeLabel({ number: e.number })}</span>}
+                <span className="ep-info">
+                  {[e.title ? episodeLabel({ number: e.number }) : null, formatDurationShort(e.duration),
+                    remaining ? `${remaining} min restantes` : null, ready ? addedLabel(e.ready_at) : null].filter(Boolean).join(' · ')}
+                </span>
+              </div>
               {e.is_new && <span className="badge-new">Nouveau</span>}
             </div>
             <div className="episode-meta">

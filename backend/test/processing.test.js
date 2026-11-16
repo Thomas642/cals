@@ -64,6 +64,7 @@ test('traitement complet : conversion, miniature, sous-titres integres extraits'
     assert.equal(ep.video_mime, 'video/mp4');
     assert.equal(ep.media.converted, 'transcode');
     assert.ok(ep.thumb_url);
+    assert.equal(ep.duration, 3); // duree affichee sur les cartes d'episode
     // Planche d'apercus : 10 images minimum pour une video de 3 s, en grille de 10 colonnes.
     assert.equal(ep.storyboard.count, 10);
     assert.equal(ep.storyboard.cols, 10);

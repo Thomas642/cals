@@ -125,6 +125,7 @@ export default function Watch({ user }) {
           <li><kbd>S</kbd> : changer de sous-titres</li>
           <li><kbd>I</kbd> : passer l'intro</li>
           <li><kbd>N</kbd> : épisode suivant</li>
+          <li><kbd>T</kbd> : mode cinéma</li>
         </ul>
       </details>
 
@@ -139,7 +140,7 @@ export default function Watch({ user }) {
               return (
                 <li key={e.id}>
                   <Link to={`/regarder/${e.id}`} className={`continue-card${e.id === ep.id ? ' current' : ''}`}>
-                    <Thumb src={e.thumb_url} seed={ep.series.title} number={e.number} progress={pr} watched={pr?.watched} playable={e.id !== ep.id} />
+                    <Thumb src={e.thumb_url} seed={ep.series.title} number={e.number} progress={pr} watched={pr?.watched} playable={e.id !== ep.id} duration={e.duration} />
                     <strong>{episodeLabel(e)}</strong>
                     {e.id === ep.id && <span className="muted small">En cours</span>}
                   </Link>

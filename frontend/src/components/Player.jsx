@@ -48,6 +48,15 @@ const Player = forwardRef(function Player({
   const [countdown, setCountdown] = useState(null); // secondes avant l'episode suivant
   const [ended, setEnded] = useState(false);
   const [started, setStarted] = useState(false);
+  // Mode cinema : page assombrie, video sur toute la largeur (memorise dans ce navigateur).
+  const [cinema, setCinema] = useState(() => { try { return localStorage.getItem('anime:cinema') === '1'; } catch { return false; } });
+  useEffect(() => {
+    document.body.classList.toggle('cinema', cinema);
+    // La video tient dans l'ecran : on fait defiler la page jusqu'au lecteur (sous la barre du haut).
+    if (cinema && wrap.current) window.scrollTo({ top: wrap.current.getBoundingClientRect().top + window.scrollY - 72, behavior: 'smooth' });
+    try { localStorage.setItem('anime:cinema', cinema ? '1' : '0'); } catch { /* ignore */ }
+    return () => document.body.classList.remove('cinema');
+  }, [cinema]);
 
   const sub = settings?.subtitles || { size: 'm', bg: 0.6, position: 'bottom' };
 
@@ -183,6 +192,7 @@ const Player = forwardRef(function Player({
         s: cycleSubs, c: cycleSubs,
         i: () => { if (intro && v.currentTime < intro.end) skipIntro(); },
         n: () => { if (next) onNext?.(); },
+        t: () => setCinema((c) => { flash(c ? 'Mode cinéma désactivé' : 'Mode cinéma'); return !c; }),
       }[k];
       if (!handled) return;
       e.preventDefault();
@@ -403,6 +413,11 @@ const Player = forwardRef(function Player({
               </div>
             )}
           </div>
+          {!fullscreen && (
+            <button className={`ctl${cinema ? ' on' : ''}`} onClick={() => setCinema((c) => !c)} aria-pressed={cinema} aria-label="Mode cinéma (T)" title="Mode cinéma (T)">
+              <Icon name="cinema" size={22} />
+            </button>
+          )}
           <button className="ctl" onClick={toggleFullscreen} aria-label={fullscreen ? 'Quitter le plein écran (F)' : 'Plein écran (F)'} title="Plein écran (F)">
             <Icon name={fullscreen ? 'fsExit' : 'fs'} size={22} />
           </button>

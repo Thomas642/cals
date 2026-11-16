@@ -126,6 +126,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     return {
       id: e.id, series_id: e.series_id, number: e.number, title: e.title, original_name: e.original_name,
       season: e.season || 1, position: e.position, ready_at: e.ready_at,
+      duration: e.media_info ? Math.round(Number(JSON.parse(e.media_info).duration) || 0) || null : null,
       is_new: !!(user?.prev_visit_at && e.ready_at && e.ready_at > user.prev_visit_at),
       intro: introOf(e, series),
       storyboard: e.storyboard_file && e.storyboard ? { ...JSON.parse(e.storyboard), url: `/api/media/storyboard/${e.id}?v=${version(e.storyboard_file)}` } : null,
@@ -153,6 +154,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
   }
   const seriesView = (s) => ({
     ...s, cover_file: undefined, has_custom_cover: !!s.cover_file, cover_url: coverUrl(s),
+    banner_file: undefined, banner_url: s.banner_file ? `/api/media/banner/${s.id}?v=${version(s.banner_file)}` : null,
     genres: s.genres ? JSON.parse(s.genres) : [], season_names: s.season_names ? JSON.parse(s.season_names) : {},
     intro: s.intro_start !== null && s.intro_end !== null ? { start: s.intro_start, end: s.intro_end } : null,
     intro_start: undefined, intro_end: undefined,
@@ -640,6 +642,14 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     res.json(seriesView(getSeries(sid)));
   });
 
+  r.delete('/series/:id/banner', (req, res) => {
+    const s = getSeries(id(req.params.id));
+    if (!s) throw notFound('Serie');
+    removeFile(s.banner_file);
+    db.prepare('UPDATE series SET banner_file = NULL WHERE id = ?').run(s.id);
+    res.json(seriesView(getSeries(s.id)));
+  });
+
   // ---------- Fiches AniList (administrateurs) ----------
   r.get('/admin/anilist/search', async (req, res) => {
     const q = text(req.query.q, { field: 'Recherche', max: 120, required: true });
@@ -653,6 +663,11 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     const a = await getAnime(id(req.body?.id));
     const fields = { anilist_id: a.id, genres: JSON.stringify(a.genres), year: a.year, title_native: a.native || null, title_romaji: a.romaji || null };
     if (req.body?.description && a.description) fields.description = a.description;
+    if (req.body?.banner && a.banner) {
+      const file = saveImage(await downloadImage(a.banner));
+      removeFile(s.banner_file);
+      fields.banner_file = file;
+    }
     if (req.body?.cover && a.cover) {
       const file = saveImage(await downloadImage(a.cover));
       removeFile(s.cover_file);
@@ -729,6 +744,7 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     if (eps.some((e) => uploading.has(e.id))) throw httpError(409, 'Un envoi est en cours pour cette serie');
     eps.forEach(deleteEpisodeFiles);
     removeFile(getSeries(sid).cover_file);
+    removeFile(getSeries(sid).banner_file);
     db.prepare('DELETE FROM series WHERE id = ?').run(sid);
     res.status(204).end();
   });
@@ -933,6 +949,12 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     const e = getEpisode(id(req.params.id));
     if (!e?.thumb_file) throw notFound('Miniature');
     sendImage(res, next, e.thumb_file);
+  });
+
+  r.get('/media/banner/:id', (req, res, next) => {
+    const s = getSeries(id(req.params.id));
+    if (!s?.banner_file) throw notFound('Bannière');
+    sendImage(res, next, s.banner_file);
   });
 
   r.get('/media/cover/:id', (req, res, next) => {

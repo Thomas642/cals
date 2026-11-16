@@ -831,3 +831,57 @@ kbd { display: inline-block; min-width: 1.7em; text-align: center; font: 600 0.7
 .history-series { color: var(--muted); font-size: 0.85rem; text-decoration: none; font-weight: 600; }
 .history-ep { color: var(--text); font-weight: 700; font-family: var(--display); font-size: 1.05rem; text-decoration: none; }
 .history-series:hover, .history-ep:hover { color: var(--accent); }
+
+/* ─── Ecran de chargement ───────────────────────────────────────────────── */
+.splash { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.9rem;
+  background: radial-gradient(40rem 26rem at 50% 40%, rgba(255, 79, 129, 0.16), transparent 65%), var(--bg); }
+.splash-logo { animation: splash-pop 0.9s cubic-bezier(.2, .9, .3, 1.3) both, splash-float 2.6s ease-in-out 0.9s infinite; }
+.splash-logo .logo-mark { filter: drop-shadow(0 12px 36px rgba(255, 79, 129, 0.55)); }
+.splash-word { animation: rise 0.6s ease-out 0.35s both; }
+.splash-bar { width: 140px; height: 3px; border-radius: 999px; background: rgba(255, 255, 255, 0.1); overflow: hidden; animation: rise 0.6s ease-out 0.5s both; }
+.splash-bar span { display: block; width: 40%; height: 100%; border-radius: inherit; background: var(--grad-warm); animation: splash-slide 1.1s ease-in-out infinite; }
+@keyframes splash-pop { from { opacity: 0; transform: scale(0.6) rotate(-12deg); } to { opacity: 1; transform: none; } }
+@keyframes splash-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+@keyframes splash-slide { from { transform: translateX(-110%); } to { transform: translateX(260%); } }
+@media (prefers-reduced-motion: reduce) { .splash-logo, .splash-word, .splash-bar, .splash-bar span { animation: none; } }
+
+/* ─── Affiche generee ───────────────────────────────────────────────────── */
+.poster-gen {
+  align-content: end; justify-items: start; padding: 1rem 0.9rem 1.1rem; overflow: hidden;
+  background: linear-gradient(160deg, var(--pc), color-mix(in srgb, var(--pc) 35%, #09080d) 70%, #09080d);
+}
+.pg-glow { position: absolute; inset: -30% -30% auto auto; width: 90%; aspect-ratio: 1; border-radius: 999px; background: radial-gradient(circle, rgba(255, 255, 255, 0.35), transparent 65%); }
+.pg-stripes { position: absolute; inset: 0; opacity: 0.12; background: repeating-linear-gradient(135deg, #fff 0 2px, transparent 2px 14px); mask-image: linear-gradient(to bottom, #000, transparent 70%); }
+.pg-title { position: relative; font-family: var(--display); font-weight: 900; color: #fff; line-height: 0.95; letter-spacing: -0.03em; text-shadow: 0 4px 18px rgba(0, 0, 0, 0.35); overflow-wrap: anywhere; hyphens: auto; }
+.pg-title.lg { font-size: clamp(2rem, 3.4vw, 2.7rem); }
+.pg-title.md { font-size: clamp(1.6rem, 2.6vw, 2.1rem); }
+.pg-title.sm { font-size: clamp(1.25rem, 2vw, 1.6rem); }
+.pg-title.xs { font-size: clamp(1rem, 1.6vw, 1.25rem); }
+.pg-native { position: relative; margin-top: 0.45rem; font-size: 0.78rem; color: rgba(255, 255, 255, 0.8); }
+.pg-mark { position: absolute; top: 0.8rem; left: 0.8rem; opacity: 0.9; }
+.pg-mark .logo-mark { filter: none; }
+.hero-poster.poster-gen .pg-title.lg { font-size: clamp(1.8rem, 3vw, 2.6rem); }
+
+/* ─── Banniere, titre japonais ──────────────────────────────────────────── */
+.native-title { margin: -0.4rem 0 0.7rem; font-size: 1rem; color: #e4dfee; opacity: 0.85; letter-spacing: 0.04em; }
+.hero-bg.banner { object-position: center 30%; }
+.banner-preview { width: 100%; max-height: 90px; object-fit: cover; border-radius: 8px; margin: 0.2rem 0 0.5rem; }
+
+/* ─── Cartes d'episode enrichies ────────────────────────────────────────── */
+.episode-title-row { align-items: flex-start; flex-wrap: nowrap; gap: 0.8rem; }
+.ep-num {
+  flex: none; min-width: 2.2rem; height: 2.2rem; padding: 0 0.4rem; border-radius: 10px; display: grid; place-items: center;
+  font-family: var(--display); font-weight: 800; font-size: 1.05rem; color: var(--text); background: var(--surface-2); border: 1px solid var(--line);
+}
+.ep-titles { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.ep-info { font-size: 0.82rem; color: var(--muted); }
+.thumb-duration { position: absolute; right: 7px; bottom: 9px; z-index: 1; font-size: 0.72rem; font-weight: 700; color: #fff; background: rgba(0, 0, 0, 0.72); padding: 0.1rem 0.4rem; border-radius: 5px; font-variant-numeric: tabular-nums; }
+
+/* ─── Mode cinema ───────────────────────────────────────────────────────── */
+body.cinema::before { content: ""; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.9); z-index: 30; pointer-events: none; animation: fadein 0.3s ease; }
+body.cinema .watch { max-width: none; }
+body.cinema .player2 { z-index: 31; margin: 0 calc(var(--gutter) * -1); border-radius: 0; box-shadow: none; }
+body.cinema .player2 video { max-height: calc(100vh - 84px); }
+body.cinema .topbar { opacity: 0.25; transition: opacity 0.3s; }
+body.cinema .topbar:hover { opacity: 1; }
+body.cinema .seasonal { display: none; }

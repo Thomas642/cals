@@ -104,6 +104,18 @@ Lecteur maison, identique sur tous les navigateurs :
 - **Aperçu au survol** : en passant la souris sur une miniature d'épisode, les images de l'épisode défilent
   (planche d'aperçus du lecteur).
 
+### Visuel
+
+- **Bannière et titre japonais** : à l'import d'une fiche AniList, le titre original (ex. Re:ゼロから始める異世界生活)
+  est toujours repris et affiché sous le titre ; la bannière large n'est reprise que si la case est cochée, et sert
+  alors de fond à la page de la série (« Retirer la bannière » en mode gestion).
+- **Affiches générées** : une série sans image reçoit une affiche typographique (titre en grand, titre japonais,
+  dégradé de sa couleur d'ambiance).
+- **Cartes d'épisode** : numéro, titre, durée (badge sur la miniature et « 24 min »), temps restant, date d'ajout.
+- **Mode cinéma** : bouton du lecteur ou touche T ; page assombrie et vidéo sur toute la largeur, sans plein écran.
+  Mémorisé dans le navigateur.
+- **Écran de chargement** : logo animé au démarrage (fixe si le système demande moins d'animations).
+
 ### Accueil et décor
 
 - **Carrousel** : jusqu'à 5 séries mises en avant (en cours, puis avec des nouveautés, puis les plus récentes),
@@ -355,8 +367,10 @@ lectures (GET, sauf `/api/users` et `/api/storage`), à sa progression et à son
 | PUT / DELETE | /api/watchlist/:seriesId | Ma liste |
 | GET | /api/recent | Épisodes récemment ajoutés (avec `is_new` pour le compte) |
 | GET | /api/media/storyboard/:id | Planche d'aperçus |
+| DELETE | /api/series/:id/banner | Retirer la bannière |
+| GET | /api/media/banner/:id | Bannière de la série |
 | GET | /api/admin/anilist/search?q= | Recherche AniList (administrateurs) |
-| POST | /api/series/:id/anilist | Import d'une fiche `{ id, description?, cover? }` |
+| POST | /api/series/:id/anilist | Import d'une fiche `{ id, description?, cover?, banner? }` |
 | GET / POST | /api/me/profiles | Profils du compte / création `{ name, avatar }` |
 | PUT / DELETE | /api/me/profiles/:id | Prénom et avatar / suppression d'un profil |
 | POST | /api/me/profile | Choisir le profil sur cet appareil `{ id }` |
