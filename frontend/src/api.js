@@ -18,12 +18,24 @@ export function onUnauthorized(handler) {
   return () => window.removeEventListener('app:unauthorized', handler);
 }
 
-export function errorFromResponse(status, data) {
+/** Delai demande par l'en-tete Retry-After (secondes ou date HTTP), en secondes ; null si absent. */
+export function parseRetryAfter(value) {
+  if (!value) return null;
+  const n = Number(value);
+  if (Number.isFinite(n) && n >= 0) return Math.ceil(n);
+  const t = Date.parse(value);
+  return Number.isNaN(t) ? null : Math.max(0, Math.ceil((t - Date.now()) / 1000));
+}
+
+export function errorFromResponse(status, data, retryAfter = null) {
   if (status === 401 && data?.code === 'auth_required') window.dispatchEvent(new Event('app:unauthorized'));
-  const fallback = status === 413
-    ? 'Fichier trop volumineux pour le serveur (limite du proxy)'
-    : `Erreur serveur (HTTP ${status})`;
-  return new ApiError(data?.error || fallback, status, data);
+  let fallback = `Erreur serveur (HTTP ${status})`;
+  if (status === 413) fallback = 'Fichier trop volumineux pour le serveur (limite du proxy)';
+  // Un 429 sans message JSON vient d'un intermediaire (Cloudflare, nginx), pas de l'API.
+  if (status === 429) fallback = 'Trop de requêtes : le proxy devant le site bloque temporairement les accès';
+  const err = new ApiError(data?.error || fallback, status, data);
+  err.retryAfter = retryAfter;
+  return err;
 }
 
 async function request(method, path, body) {
@@ -35,7 +47,7 @@ async function request(method, path, body) {
   });
   if (res.status === 204) return null;
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw errorFromResponse(res.status, data);
+  if (!res.ok) throw errorFromResponse(res.status, data, parseRetryAfter(res.headers.get('Retry-After')));
   return data;
 }
 
