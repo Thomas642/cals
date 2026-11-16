@@ -145,7 +145,7 @@ export default function Library({ user }) {
               <li key={e.id}>
                 <Link to={`/regarder/${e.id}`} className="continue-card">
                   <div className="thumb-wrap">
-                    <Thumb src={e.thumb_url} seed={e.series_title} number={e.number} storyboard={e.storyboard} />
+                    <Thumb src={e.thumb_url} seed={e.series_title} number={e.number} storyboard={e.storyboard} duration={e.duration} />
                     {e.is_new && <span className="badge-new on-thumb">Nouveau</span>}
                   </div>
                   <strong>{e.series_title}</strong>

@@ -8,6 +8,7 @@ import Seasonal, { currentSeason } from './components/Seasonal.jsx';
 import UploadTray from './components/UploadTray.jsx';
 import AccountMenu from './components/AccountMenu.jsx';
 import Logo from './components/Logo.jsx';
+import Splash from './components/Splash.jsx';
 import Login from './pages/Login.jsx';
 import Library from './pages/Library.jsx';
 import Series from './pages/Series.jsx';
@@ -76,7 +77,7 @@ export default function App() {
   }, []);
 
   if (error) return <BootError error={error} onRetry={boot} />;
-  if (auth === undefined) return <div className="center-screen"><span className="spinner big" aria-label="Chargement" /></div>;
+  if (auth === undefined) return <Splash />;
   if (!auth.authenticated) {
     return <Login configured={auth.configured} onLoggedIn={() => { api.clear(); setAuth(undefined); boot(); }} />;
   }

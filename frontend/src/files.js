@@ -119,3 +119,33 @@ export function accentStyle(hex) {
     '--glow': `${hex}55`,
   };
 }
+
+/** Duree lisible : « 24 min », « 1 h 05 ». */
+export function formatDurationShort(seconds) {
+  if (!seconds) return null;
+  const m = Math.round(seconds / 60);
+  if (m < 60) return `${Math.max(1, m)} min`;
+  return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`;
+}
+
+/** Duree en horloge pour la miniature : « 24:06 ». */
+export function formatClock(seconds) {
+  if (!seconds) return null;
+  const s = Math.round(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${r}` : `${m}:${r}`;
+}
+
+/** Date d'ajout : « aujourd'hui », « hier », « il y a 3 j », puis « le 12 nov. ». */
+export function addedLabel(sqlDate) {
+  if (!sqlDate) return null;
+  const d = new Date(`${String(sqlDate).replace(' ', 'T')}Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  const days = Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 86400000);
+  if (days <= 0) return "ajouté aujourd'hui";
+  if (days === 1) return 'ajouté hier';
+  if (days < 7) return `ajouté il y a ${days} j`;
+  return `ajouté le ${d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined })}`;
+}

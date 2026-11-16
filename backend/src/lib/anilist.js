@@ -12,7 +12,7 @@ const GENRES_FR = {
 };
 
 const FIELDS = `id siteUrl format episodes seasonYear startDate { year } genres
-  title { romaji english native } coverImage { extraLarge large color } description(asHtml: false)`;
+  title { romaji english native } coverImage { extraLarge large color } bannerImage description(asHtml: false)`;
 
 async function query(q, variables) {
   let res;
@@ -68,6 +68,7 @@ const view = (m) => ({
   cover: m.coverImage?.extraLarge || m.coverImage?.large || null,
   cover_small: m.coverImage?.large || null,
   color: m.coverImage?.color || null,
+  banner: m.bannerImage || null,
   description: cleanDescription(m.description),
 });
 
