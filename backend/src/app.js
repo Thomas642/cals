@@ -1,32 +1,99 @@
 import express from 'express';
-import * as v from './lib/validate.js';
-import { ageFromBirthDate, nutritionFor, round1, unitForFood } from './lib/calc.js';
-import { getProfile, profileView, recalcTargets, syncCurrentWeight } from './lib/profile-service.js';
-import { entriesForDate, insertEntry, remaining, totals } from './lib/journal-service.js';
-import { recipeView, saveRecipe, validateRecipe } from './lib/recipe-service.js';
-import { askAssistant, contextBlock, resolveModel, resolveProvider } from './lib/assistant.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { pipeline } from 'node:stream/promises';
 import { createAuth } from './lib/auth.js';
+import { SUBTITLE_EXTENSIONS, toWebVtt } from './lib/subtitles.js';
 
-const notFound = (what) => Object.assign(new Error(`${what} introuvable`), { status: 404 });
-const today = () => new Date().toISOString().slice(0, 10);
+// Formats video acceptes et type MIME annonce au navigateur. Le MP4 (H.264 + AAC) est le plus
+// largement lisible ; MKV et MOV dependent du navigateur et des codecs du fichier.
+export const VIDEO_TYPES = {
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  webm: 'video/webm',
+  mkv: 'video/x-matroska',
+  mov: 'video/quicktime',
+};
+export const MAX_CHUNK_BYTES = 64 * 1024 * 1024;   // taille maximale d'un morceau envoye
+const DISK_MARGIN_BYTES = 512 * 1024 * 1024;        // espace laisse libre sur le disque
 
-function addDays(iso, n) {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
+const httpError = (status, message, extra) => Object.assign(new Error(message), { status, extra });
+const notFound = (what) => httpError(404, `${what} introuvable`);
+
+function id(value) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) throw httpError(400, 'Identifiant invalide');
+  return n;
 }
 
-export function createApp(db) {
+function text(value, { field, max, required = false }) {
+  if (value === undefined || value === null || value === '') {
+    if (required) throw httpError(400, `${field} obligatoire`);
+    return null;
+  }
+  if (typeof value !== 'string') throw httpError(400, `${field} invalide`);
+  const v = value.trim();
+  if (required && !v) throw httpError(400, `${field} obligatoire`);
+  if (v.length > max) throw httpError(400, `${field} trop long (${max} caracteres maximum)`);
+  return v || null;
+}
+
+function episodeNumber(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0 || n > 100000) throw httpError(400, 'Numero d\'episode invalide');
+  return n;
+}
+
+const extensionOf = (filename) => path.extname(String(filename || '')).slice(1).toLowerCase();
+
+export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(process.cwd(), 'data', 'media'),
+  maxVideoBytes = (Number(process.env.MAX_VIDEO_GB) || 20) * 1024 ** 3 } = {}) {
+  fs.mkdirSync(path.join(mediaDir, 'videos'), { recursive: true });
+  fs.mkdirSync(path.join(mediaDir, 'subtitles'), { recursive: true });
+  const abs = (rel) => path.join(mediaDir, rel);
+  const removeFile = (rel) => { if (rel) fs.rmSync(abs(rel), { force: true }); };
+  const fileSize = (p) => { try { return fs.statSync(p).size; } catch { return 0; } };
+  const uploading = new Set(); // episodes dont un morceau est en cours de reception
+
+  function freeBytes() {
+    try {
+      const s = fs.statfsSync(mediaDir);
+      return s.bavail * s.bsize;
+    } catch {
+      return null;
+    }
+  }
+
+  const getSeries = (sid) => db.prepare('SELECT * FROM series WHERE id = ?').get(sid);
+  const getEpisode = (eid) => db.prepare('SELECT * FROM episode WHERE id = ?').get(eid);
+  const subtitlesOf = (eid) => db.prepare('SELECT id, label, lang, original_name, created_at FROM subtitle WHERE episode_id = ? ORDER BY id').all(eid);
+
+  function episodeView(e) {
+    const received = e.status === 'ready' ? e.video_size : fileSize(`${abs(e.video_file)}.part`);
+    return {
+      id: e.id, series_id: e.series_id, number: e.number, title: e.title, original_name: e.original_name,
+      video_mime: e.video_mime, video_size: e.video_size, status: e.status, received, created_at: e.created_at,
+      subtitles: subtitlesOf(e.id),
+    };
+  }
+
+  const episodesOf = (sid) => db.prepare('SELECT * FROM episode WHERE series_id = ? ORDER BY number IS NULL, number, id').all(sid);
+
+  function deleteEpisodeFiles(e) {
+    removeFile(e.video_file);
+    removeFile(e.video_file && `${e.video_file}.part`);
+    for (const s of db.prepare('SELECT file FROM subtitle WHERE episode_id = ?').all(e.id)) removeFile(s.file);
+  }
+
   const app = express();
   app.set('trust proxy', 'loopback, uniquelocal');
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '6mb' }));
   const auth = createAuth(db);
   const r = express.Router();
 
-  r.get('/health', (req, res) => {
-    const provider = resolveProvider();
-    res.json({ ok: true, ai_enabled: !!provider, ai_provider: provider, model: resolveModel(provider) });
-  });
+  r.get('/health', (req, res) => res.json({ ok: true }));
 
   // ---------- Authentification (routes publiques) ----------
   r.get('/auth/status', (req, res) => res.json(auth.status(req)));
@@ -38,333 +105,189 @@ export function createApp(db) {
   // Toutes les routes suivantes exigent une session.
   r.use(auth.requireSession);
 
-  // ---------- Profil ----------
-  r.get('/profile', (req, res) => res.json(profileView(db)));
-
-  r.put('/profile', (req, res) => {
-    const p = v.profile(req.body || {});
-    const exists = !!getProfile(db);
-    const cols = ['username', 'sex', 'birth_date', 'height_cm', 'weight_kg', 'activity_level', 'goal', 'goal_intensity', 'manual_targets'];
-    if (p.manual_targets) cols.push('target_kcal', 'target_protein_g', 'target_carbs_g', 'target_fat_g');
-    db.transaction(() => {
-      if (exists) {
-        db.prepare(`UPDATE profile SET ${cols.map((c) => `${c} = @${c}`).join(', ')} WHERE id = 1`).run(p);
-      } else {
-        db.prepare(`INSERT INTO profile (id, ${cols.join(', ')}) VALUES (1, ${cols.map((c) => `@${c}`).join(', ')})`).run(p);
-        db.prepare('INSERT INTO weight_log (date, weight_kg) VALUES (?, ?)').run(today(), p.weight_kg);
-      }
-      recalcTargets(db);
-    })();
-    res.json(profileView(db));
+  r.get('/storage', (req, res) => {
+    const used = db.prepare("SELECT COALESCE(SUM(video_size), 0) AS n FROM episode WHERE status = 'ready'").get().n;
+    res.json({ free_bytes: freeBytes(), videos_bytes: used, max_video_bytes: maxVideoBytes, max_chunk_bytes: MAX_CHUNK_BYTES });
   });
 
-  // ---------- Aliments ----------
-  r.get('/foods', (req, res) => {
-    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-    const rows = q
-      ? db.prepare("SELECT * FROM food WHERE name LIKE ? ESCAPE '\\' ORDER BY name COLLATE NOCASE")
-        .all(`%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
-      : db.prepare('SELECT * FROM food ORDER BY name COLLATE NOCASE').all();
-    res.json(rows);
+  // ---------- Series ----------
+  r.get('/series', (req, res) => {
+    res.json(db.prepare(`SELECT s.*,
+        (SELECT COUNT(*) FROM episode e WHERE e.series_id = s.id AND e.status = 'ready') AS episode_count,
+        (SELECT COUNT(DISTINCT e.id) FROM episode e JOIN subtitle t ON t.episode_id = e.id WHERE e.series_id = s.id) AS subtitled_count
+      FROM series s ORDER BY s.title COLLATE NOCASE`).all());
   });
 
-  r.post('/foods', (req, res) => {
-    const f = v.food(req.body || {});
-    const info = db.prepare(`INSERT INTO food (name, kcal, protein_g, carbs_g, fat_g, ref_unit, source, is_estimate)
-      VALUES (@name, @kcal, @protein_g, @carbs_g, @fat_g, @ref_unit, @source, @is_estimate)`).run(f);
-    res.status(201).json(db.prepare('SELECT * FROM food WHERE id = ?').get(info.lastInsertRowid));
+  r.post('/series', (req, res) => {
+    const title = text(req.body?.title, { field: 'Titre', max: 200, required: true });
+    const description = text(req.body?.description, { field: 'Description', max: 4000 });
+    const info = db.prepare('INSERT INTO series (title, description) VALUES (?, ?)').run(title, description);
+    res.status(201).json(getSeries(info.lastInsertRowid));
   });
 
-  r.put('/foods/:id', (req, res) => {
-    const fid = v.id(req.params.id);
-    const f = v.food(req.body || {});
-    const info = db.prepare(`UPDATE food SET name = @name, kcal = @kcal, protein_g = @protein_g, carbs_g = @carbs_g,
-      fat_g = @fat_g, ref_unit = @ref_unit, source = @source, is_estimate = @is_estimate WHERE id = @id`).run({ ...f, id: fid });
-    if (!info.changes) throw notFound('Aliment');
-    res.json(db.prepare('SELECT * FROM food WHERE id = ?').get(fid));
+  r.get('/series/:id', (req, res) => {
+    const s = getSeries(id(req.params.id));
+    if (!s) throw notFound('Serie');
+    res.json({ ...s, episodes: episodesOf(s.id).map(episodeView) });
   });
 
-  r.delete('/foods/:id', (req, res) => {
-    const fid = v.id(req.params.id);
-    const used = db.prepare('SELECT COUNT(*) AS n FROM recipe_ingredient WHERE food_id = ?').get(fid).n;
-    if (used) throw Object.assign(new Error(`Aliment utilise dans ${used} ingredient(s) de recette`), { status: 409 });
-    const info = db.prepare('DELETE FROM food WHERE id = ?').run(fid);
-    if (!info.changes) throw notFound('Aliment');
+  r.put('/series/:id', (req, res) => {
+    const sid = id(req.params.id);
+    if (!getSeries(sid)) throw notFound('Serie');
+    const title = text(req.body?.title, { field: 'Titre', max: 200, required: true });
+    const description = text(req.body?.description, { field: 'Description', max: 4000 });
+    db.prepare('UPDATE series SET title = ?, description = ? WHERE id = ?').run(title, description, sid);
+    res.json(getSeries(sid));
+  });
+
+  r.delete('/series/:id', (req, res) => {
+    const sid = id(req.params.id);
+    if (!getSeries(sid)) throw notFound('Serie');
+    const eps = episodesOf(sid);
+    if (eps.some((e) => uploading.has(e.id))) throw httpError(409, 'Un envoi est en cours pour cette serie');
+    eps.forEach(deleteEpisodeFiles);
+    db.prepare('DELETE FROM series WHERE id = ?').run(sid);
     res.status(204).end();
   });
 
-  // ---------- Journal ----------
-  function dayView(date) {
-    const entries = entriesForDate(db, date);
-    const t = totals(entries);
-    return { date, entries, totals: t, remaining: remaining(getProfile(db), t) };
-  }
-
-  r.get('/journal', (req, res) => res.json(dayView(v.date(req.query.date || today()))));
-
-  // Deux modes : { food_id, quantity } (valeurs calculees depuis la base) ou saisie complete.
-  r.post('/journal', (req, res) => {
-    const body = req.body || {};
-    let entry;
-    if (body.food_id && body.kcal === undefined) {
-      const food = db.prepare('SELECT * FROM food WHERE id = ?').get(v.id(body.food_id, 'food_id'));
-      if (!food) throw notFound('Aliment');
-      const unit = unitForFood(food);
-      const quantity = v.num(body.quantity, 'quantity', { min: 0.01, max: unit === 'g' ? 5000 : 50 });
-      entry = v.journalEntry({ date: body.date, food_id: food.id, display_name: food.name, quantity, unit,
-        ...nutritionFor(food, quantity), origin: 'base' });
-    } else {
-      entry = v.journalEntry(body);
-      if (entry.food_id && !db.prepare('SELECT 1 FROM food WHERE id = ?').get(entry.food_id)) entry.food_id = null;
+  // ---------- Episodes ----------
+  // Creation : annonce le fichier (nom, taille), puis la video est envoyee par morceaux.
+  r.post('/series/:id/episodes', (req, res) => {
+    const sid = id(req.params.id);
+    if (!getSeries(sid)) throw notFound('Serie');
+    const filename = text(req.body?.filename, { field: 'Nom du fichier', max: 300, required: true });
+    const ext = extensionOf(filename);
+    if (!VIDEO_TYPES[ext]) {
+      throw httpError(400, `Format video non pris en charge (.${ext || '?'}). Formats acceptes : ${Object.keys(VIDEO_TYPES).join(', ')}`);
     }
-    res.status(201).json(insertEntry(db, entry));
-  });
-
-  // Recalcule les entrees d'un jour saisies depuis la base avec les valeurs actuelles des aliments.
-  // Les entrees libres, IA ou recettes ne sont pas touchees (pas d'aliment de reference).
-  r.post('/journal/recompute', (req, res) => {
-    const date = v.date(req.body?.date);
-    const rows = db.prepare(`SELECT e.*, f.kcal AS f_kcal, f.protein_g AS f_protein_g, f.carbs_g AS f_carbs_g,
-        f.fat_g AS f_fat_g, f.ref_unit AS f_ref_unit, f.name AS f_name
-      FROM journal_entry e JOIN food f ON f.id = e.food_id WHERE e.date = ?`).all(date);
-    const update = db.prepare(`UPDATE journal_entry SET kcal = @kcal, protein_g = @protein_g, carbs_g = @carbs_g,
-      fat_g = @fat_g WHERE id = @id`);
-    const changed = [];
-    db.transaction(() => {
-      for (const e of rows) {
-        const food = { kcal: e.f_kcal, protein_g: e.f_protein_g, carbs_g: e.f_carbs_g, fat_g: e.f_fat_g, ref_unit: e.f_ref_unit };
-        if (unitForFood(food) !== e.unit) continue; // unite incompatible : on ne devine pas
-        const n = nutritionFor(food, e.quantity);
-        if (n.kcal === e.kcal && n.protein_g === e.protein_g && n.carbs_g === e.carbs_g && n.fat_g === e.fat_g) continue;
-        update.run({ id: e.id, ...n });
-        changed.push({ id: e.id, name: e.display_name, before: { kcal: e.kcal, protein_g: e.protein_g }, after: n });
-      }
-    })();
-    res.json({ date, checked: rows.length, updated: changed.length, changes: changed });
-  });
-
-  r.delete('/journal/:id', (req, res) => {
-    const info = db.prepare('DELETE FROM journal_entry WHERE id = ?').run(v.id(req.params.id));
-    if (!info.changes) throw notFound('Entree');
-    res.status(204).end();
-  });
-
-  // ---------- Recettes ----------
-  r.get('/recipes', (req, res) => {
-    const ids = db.prepare('SELECT id FROM recipe ORDER BY name COLLATE NOCASE').all();
-    res.json(ids.map(({ id }) => recipeView(db, id)));
-  });
-
-  r.get('/recipes/:id', (req, res) => {
-    const rec = recipeView(db, v.id(req.params.id));
-    if (!rec) throw notFound('Recette');
-    res.json(rec);
-  });
-
-  r.post('/recipes', (req, res) => {
-    const rid = saveRecipe(db, validateRecipe(db, req.body || {}));
-    res.status(201).json(recipeView(db, rid));
-  });
-
-  r.put('/recipes/:id', (req, res) => {
-    const rid = v.id(req.params.id);
-    if (!db.prepare('SELECT 1 FROM recipe WHERE id = ?').get(rid)) throw notFound('Recette');
-    saveRecipe(db, validateRecipe(db, req.body || {}), rid);
-    res.json(recipeView(db, rid));
-  });
-
-  r.delete('/recipes/:id', (req, res) => {
-    const info = db.prepare('DELETE FROM recipe WHERE id = ?').run(v.id(req.params.id));
-    if (!info.changes) throw notFound('Recette');
-    res.status(204).end();
-  });
-
-  // Ajout d'une recette au journal en une action (valeurs par portion figees).
-  r.post('/recipes/:id/log', (req, res) => {
-    const rec = recipeView(db, v.id(req.params.id));
-    if (!rec) throw notFound('Recette');
-    const portions = v.num(req.body?.servings ?? 1, 'servings', { min: 0.25, max: 20 });
-    const s = (x) => (x === null ? null : round1(x * portions));
-    const entry = v.journalEntry({
-      date: req.body?.date || today(), food_id: null, display_name: `${rec.name} (recette)`,
-      quantity: portions, unit: 'unit', kcal: s(rec.per_serving.kcal), protein_g: s(rec.per_serving.protein_g),
-      carbs_g: s(rec.per_serving.carbs_g), fat_g: s(rec.per_serving.fat_g), origin: 'recipe',
-    });
-    res.status(201).json(insertEntry(db, entry));
-  });
-
-  // ---------- Routines ----------
-  function routineView(rid) {
-    const rt = db.prepare('SELECT * FROM routine WHERE id = ?').get(rid);
-    if (!rt) return null;
-    const items = db.prepare('SELECT * FROM routine_item WHERE routine_id = ? ORDER BY id').all(rid);
-    return { ...rt, items, totals: totals(items) };
-  }
-
-  r.get('/routines', (req, res) => {
-    res.json(db.prepare('SELECT id FROM routine ORDER BY name COLLATE NOCASE').all().map(({ id }) => routineView(id)));
-  });
-
-  // Cree une routine a partir des entrees d'un jour (entry_ids optionnel pour filtrer).
-  r.post('/routines', (req, res) => {
-    const name = v.str(req.body?.name, 'name', { max: 120 });
-    const date = v.date(req.body?.from_date, 'from_date');
-    let entries = entriesForDate(db, date);
-    if (Array.isArray(req.body?.entry_ids)) {
-      const keep = new Set(req.body.entry_ids.map(Number));
-      entries = entries.filter((e) => keep.has(e.id));
+    const size = Number(req.body?.size);
+    if (!Number.isInteger(size) || size <= 0) throw httpError(400, 'Taille de fichier invalide');
+    if (size > maxVideoBytes) throw httpError(413, `Fichier trop volumineux (maximum ${Math.round(maxVideoBytes / 1024 ** 3)} Go)`);
+    const free = freeBytes();
+    if (free !== null && size + DISK_MARGIN_BYTES > free) {
+      throw httpError(507, `Espace disque insuffisant sur le serveur (${(free / 1024 ** 3).toFixed(1)} Go libres)`);
     }
-    if (!entries.length) throw new v.ValidationError('Aucune entree a enregistrer dans la routine');
-    const rid = db.transaction(() => {
-      const id = db.prepare('INSERT INTO routine (name) VALUES (?)').run(name).lastInsertRowid;
-      const ins = db.prepare(`INSERT INTO routine_item (routine_id, food_id, display_name, quantity, unit, kcal, protein_g, carbs_g, fat_g)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-      for (const e of entries) ins.run(id, e.food_id, e.display_name, e.quantity, e.unit, e.kcal, e.protein_g, e.carbs_g, e.fat_g);
-      return id;
-    })();
-    res.status(201).json(routineView(rid));
+    const number = episodeNumber(req.body?.number);
+    const title = text(req.body?.title, { field: 'Titre', max: 300 });
+    const file = `videos/${crypto.randomUUID()}.${ext}`;
+    const info = db.prepare(`INSERT INTO episode (series_id, number, title, original_name, video_file, video_mime, video_size)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(sid, number, title, filename, file, VIDEO_TYPES[ext], size);
+    res.status(201).json(episodeView(getEpisode(info.lastInsertRowid)));
   });
 
-  r.delete('/routines/:id', (req, res) => {
-    const info = db.prepare('DELETE FROM routine WHERE id = ?').run(v.id(req.params.id));
-    if (!info.changes) throw notFound('Routine');
-    res.status(204).end();
-  });
-
-  r.post('/routines/:id/log', (req, res) => {
-    const rt = routineView(v.id(req.params.id));
-    if (!rt) throw notFound('Routine');
-    const date = v.date(req.body?.date || today());
-    const created = db.transaction(() => rt.items.map((it) => insertEntry(db, v.journalEntry({
-      date, food_id: it.food_id, display_name: it.display_name, quantity: it.quantity, unit: it.unit,
-      kcal: it.kcal, protein_g: it.protein_g, carbs_g: it.carbs_g, fat_g: it.fat_g, origin: 'base',
-    }))))();
-    res.status(201).json(created);
-  });
-
-  // ---------- Poids ----------
-  r.get('/weights', (req, res) => res.json(db.prepare('SELECT * FROM weight_log ORDER BY date, id').all()));
-
-  r.post('/weights', (req, res) => {
-    const date = v.date(req.body?.date || today());
-    const weight = v.num(req.body?.weight_kg, 'weight_kg', { min: 30, max: 300 });
-    const row = db.transaction(() => {
-      // Une mesure par jour : la nouvelle remplace l'ancienne.
-      db.prepare('DELETE FROM weight_log WHERE date = ?').run(date);
-      const id = db.prepare('INSERT INTO weight_log (date, weight_kg) VALUES (?, ?)').run(date, weight).lastInsertRowid;
-      syncCurrentWeight(db);
-      return db.prepare('SELECT * FROM weight_log WHERE id = ?').get(id);
-    })();
-    res.status(201).json(row);
-  });
-
-  r.delete('/weights/:id', (req, res) => {
-    const info = db.prepare('DELETE FROM weight_log WHERE id = ?').run(v.id(req.params.id));
-    if (!info.changes) throw notFound('Mesure');
-    syncCurrentWeight(db);
-    res.status(204).end();
-  });
-
-  // ---------- Statistiques ----------
-  // Adherence : ecart moyen aux cibles sur les jours comportant au moins une entree.
-  r.get('/stats', (req, res) => {
-    const end = v.date(req.query.end || today(), 'end');
-    const profile = getProfile(db);
-    const rows = db.prepare(`SELECT date, SUM(kcal) AS kcal, SUM(protein_g) AS protein_g, COUNT(*) AS n
-      FROM journal_entry WHERE date > ? AND date <= ? GROUP BY date ORDER BY date`).all(addDays(end, -30), end);
-    const window = (days) => {
-      const start = addDays(end, -days);
-      const inWin = rows.filter((x) => x.date > start);
-      if (!inWin.length || !profile) return { days, logged_days: inWin.length, avg_kcal: null, avg_protein_g: null, kcal_gap: null, protein_gap: null };
-      const avg = (k) => round1(inWin.reduce((s, x) => s + x[k], 0) / inWin.length);
-      const avgAbs = (k, target) => round1(inWin.reduce((s, x) => s + Math.abs(x[k] - target), 0) / inWin.length);
-      return {
-        days,
-        logged_days: inWin.length,
-        avg_kcal: avg('kcal'),
-        avg_protein_g: avg('protein_g'),
-        kcal_gap: round1(avg('kcal') - profile.target_kcal),
-        protein_gap: round1(avg('protein_g') - profile.target_protein_g),
-        kcal_abs_gap: avgAbs('kcal', profile.target_kcal),
-        protein_abs_gap: avgAbs('protein_g', profile.target_protein_g),
-      };
-    };
-    // Moyenne glissante 7 jours du poids (mesures presentes dans la fenetre).
-    const weights = db.prepare('SELECT id, date, weight_kg FROM weight_log ORDER BY date').all();
-    const weightSeries = weights.map((w) => {
-      const from = addDays(w.date, -6);
-      const win = weights.filter((x) => x.date >= from && x.date <= w.date);
-      return { ...w, avg7: round1(win.reduce((s, x) => s + x.weight_kg, 0) / win.length) };
-    });
+  r.get('/episodes/:id', (req, res) => {
+    const e = getEpisode(id(req.params.id));
+    if (!e) throw notFound('Episode');
+    const s = getSeries(e.series_id);
+    const ready = episodesOf(e.series_id).filter((x) => x.status === 'ready');
+    const i = ready.findIndex((x) => x.id === e.id);
     res.json({
-      end,
-      targets: profile ? { kcal: profile.target_kcal, protein_g: profile.target_protein_g } : null,
-      days: rows.map((x) => ({ date: x.date, kcal: round1(x.kcal), protein_g: round1(x.protein_g), entries: x.n })),
-      adherence7: window(7),
-      adherence30: window(30),
-      weights: weightSeries,
+      ...episodeView(e),
+      series: { id: s.id, title: s.title },
+      prev_id: i > 0 ? ready[i - 1].id : null,
+      next_id: i >= 0 && i < ready.length - 1 ? ready[i + 1].id : null,
     });
   });
 
-  // ---------- Entrainement : journal de charges ----------
-  r.get('/workouts', (req, res) => {
-    const rows = req.query.day_code
-      ? db.prepare('SELECT * FROM workout_log WHERE day_code = ? ORDER BY date DESC, id DESC LIMIT 200').all(String(req.query.day_code))
-      : db.prepare('SELECT * FROM workout_log ORDER BY date DESC, id DESC LIMIT 200').all();
-    res.json(rows);
+  r.put('/episodes/:id', (req, res) => {
+    const eid = id(req.params.id);
+    if (!getEpisode(eid)) throw notFound('Episode');
+    db.prepare('UPDATE episode SET number = ?, title = ? WHERE id = ?')
+      .run(episodeNumber(req.body?.number), text(req.body?.title, { field: 'Titre', max: 300 }), eid);
+    res.json(episodeView(getEpisode(eid)));
   });
 
-  r.post('/workouts', (req, res) => {
-    const b = req.body || {};
-    const row = {
-      date: v.date(b.date || today()),
-      day_code: v.oneOf(b.day_code, 'day_code', ['J1', 'J2', 'J3', 'J4', 'J5']),
-      exercise: v.str(b.exercise, 'exercise', { max: 120 }),
-      load_kg: v.num(b.load_kg, 'load_kg', { min: 0, max: 500, optional: true }),
-      reps: v.str(b.reps, 'reps', { max: 60, optional: true }),
-      note: v.str(b.note, 'note', { max: 500, optional: true }),
-    };
-    const info = db.prepare(`INSERT INTO workout_log (date, day_code, exercise, load_kg, reps, note)
-      VALUES (@date, @day_code, @exercise, @load_kg, @reps, @note)`).run(row);
-    res.status(201).json(db.prepare('SELECT * FROM workout_log WHERE id = ?').get(info.lastInsertRowid));
-  });
-
-  r.delete('/workouts/:id', (req, res) => {
-    const info = db.prepare('DELETE FROM workout_log WHERE id = ?').run(v.id(req.params.id));
-    if (!info.changes) throw notFound('Seance');
+  r.delete('/episodes/:id', (req, res) => {
+    const e = getEpisode(id(req.params.id));
+    if (!e) throw notFound('Episode');
+    if (uploading.has(e.id)) throw httpError(409, 'Un envoi est en cours pour cet episode');
+    deleteEpisodeFiles(e);
+    db.prepare('DELETE FROM episode WHERE id = ?').run(e.id);
     res.status(204).end();
   });
 
-  // ---------- Assistant IA ----------
-  r.post('/assistant', async (req, res, next) => {
-    try {
-      const message = v.str(req.body?.message, 'message', { max: 2000 });
-      const date = v.date(req.body?.date || today());
-      const history = (Array.isArray(req.body?.history) ? req.body.history : [])
-        .filter((h) => (h?.role === 'user' || h?.role === 'assistant') && typeof h.content === 'string' && h.content.trim())
-        .slice(-10)
-        .map((h) => ({ role: h.role, content: h.content.slice(0, 4000) }));
-      if (history.length && history[0].role !== 'user') history.shift();
-      const profile = getProfile(db);
-      const day = dayView(date);
-      const foods = db.prepare('SELECT * FROM food ORDER BY id').all();
-      const context = contextBlock({
-        profile, age: profile ? ageFromBirthDate(profile.birth_date) : null,
-        remaining: day.remaining || {}, consumed: day.totals, date,
-      });
-      res.json(await askAssistant({ message, history, foods, context }));
-    } catch (err) {
-      next(err);
+  // Reception d'un morceau de video. offset = octets deja recus (reprise possible apres coupure).
+  r.put('/episodes/:id/upload', async (req, res) => {
+    const e = getEpisode(id(req.params.id));
+    if (!e) throw notFound('Episode');
+    if (e.status === 'ready') throw httpError(409, 'La video de cet episode est deja complete');
+    if (uploading.has(e.id)) throw httpError(409, 'Un envoi est deja en cours pour cet episode');
+    const part = `${abs(e.video_file)}.part`;
+    const received = fileSize(part);
+    const offset = Number(req.query.offset);
+    if (!Number.isInteger(offset) || offset !== received) {
+      throw httpError(409, 'Position d\'envoi incorrecte', { received });
     }
+    const length = Number(req.headers['content-length']);
+    if (!Number.isInteger(length) || length <= 0) throw httpError(411, 'En-tete Content-Length requis');
+    if (length > MAX_CHUNK_BYTES) throw httpError(413, 'Morceau trop volumineux');
+    if (offset + length > e.video_size) throw httpError(400, 'Le morceau depasse la taille annoncee du fichier');
+
+    uploading.add(e.id);
+    try {
+      await pipeline(req, fs.createWriteStream(part, { flags: 'a' }));
+    } catch {
+      // Connexion coupee : les octets deja ecrits restent valables, le client reprendra a partir de la.
+      if (!res.headersSent && !req.destroyed) throw httpError(400, 'Envoi interrompu', { received: fileSize(part) });
+      return;
+    } finally {
+      uploading.delete(e.id);
+    }
+    const now = fileSize(part);
+    if (now === e.video_size) {
+      fs.renameSync(part, abs(e.video_file));
+      db.prepare("UPDATE episode SET status = 'ready' WHERE id = ?").run(e.id);
+    }
+    res.json({ received: now, status: now === e.video_size ? 'ready' : 'uploading' });
   });
 
-  // ---------- Export / sauvegarde ----------
-  r.get('/export', (req, res) => {
-    const tables = ['profile', 'weight_log', 'food', 'journal_entry', 'recipe', 'recipe_ingredient', 'routine', 'routine_item', 'workout_log'];
-    const dump = { app: 'cals', exported_at: new Date().toISOString() };
-    for (const t of tables) dump[t] = db.prepare(`SELECT * FROM ${t}`).all();
-    res.setHeader('Content-Disposition', `attachment; filename="cals-export-${today()}.json"`);
-    res.json(dump);
+  // ---------- Sous-titres ----------
+  r.post('/episodes/:id/subtitles', (req, res) => {
+    const e = getEpisode(id(req.params.id));
+    if (!e) throw notFound('Episode');
+    const filename = text(req.body?.filename, { field: 'Nom du fichier', max: 300, required: true });
+    const ext = extensionOf(filename);
+    if (!SUBTITLE_EXTENSIONS.includes(ext)) {
+      throw httpError(400, `Format de sous-titres non pris en charge (.${ext || '?'}). Formats acceptes : ${SUBTITLE_EXTENSIONS.join(', ')}`);
+    }
+    if (typeof req.body?.content !== 'string') throw httpError(400, 'Contenu du fichier manquant');
+    const vtt = toWebVtt(req.body.content, ext);
+    const label = text(req.body?.label, { field: 'Nom de la piste', max: 80 }) || 'Français';
+    const lang = (text(req.body?.lang, { field: 'Langue', max: 12 }) || 'fr').toLowerCase();
+    if (!/^[a-z]{2,3}(-[a-z0-9]{2,8})?$/.test(lang)) throw httpError(400, 'Code de langue invalide (ex. fr, ja, en)');
+    const file = `subtitles/${crypto.randomUUID()}.vtt`;
+    fs.writeFileSync(abs(file), vtt);
+    const info = db.prepare('INSERT INTO subtitle (episode_id, label, lang, original_name, file) VALUES (?, ?, ?, ?, ?)')
+      .run(e.id, label, lang, filename, file);
+    res.status(201).json(db.prepare('SELECT id, label, lang, original_name, created_at FROM subtitle WHERE id = ?').get(info.lastInsertRowid));
+  });
+
+  r.delete('/subtitles/:id', (req, res) => {
+    const s = db.prepare('SELECT * FROM subtitle WHERE id = ?').get(id(req.params.id));
+    if (!s) throw notFound('Sous-titre');
+    removeFile(s.file);
+    db.prepare('DELETE FROM subtitle WHERE id = ?').run(s.id);
+    res.status(204).end();
+  });
+
+  // ---------- Lecture ----------
+  // sendFile gere les requetes partielles (Range) : avance/retour rapide dans la video.
+  r.get('/media/video/:id', (req, res, next) => {
+    const e = getEpisode(id(req.params.id));
+    if (!e || e.status !== 'ready') throw notFound('Video');
+    res.type(e.video_mime);
+    res.sendFile(abs(e.video_file), { headers: { 'Cache-Control': 'private, max-age=3600' } }, (err) => {
+      if (err && !res.headersSent) next(err);
+    });
+  });
+
+  r.get('/media/subtitle/:id', (req, res, next) => {
+    const s = db.prepare('SELECT file FROM subtitle WHERE id = ?').get(id(req.params.id));
+    if (!s) throw notFound('Sous-titre');
+    res.type('text/vtt; charset=utf-8');
+    res.sendFile(abs(s.file), { headers: { 'Cache-Control': 'private, no-cache' } }, (err) => {
+      if (err && !res.headersSent) next(err);
+    });
   });
 
   app.use('/api', r);
@@ -372,9 +295,10 @@ export function createApp(db) {
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
-    const status = err.status || (err.type === 'entity.parse.failed' ? 400 : 500);
-    if (status >= 500 && status !== 503) console.error(err);
-    res.status(status).json({ error: status === 500 ? 'Erreur interne' : err.message, code: status === 503 ? 'ia_indisponible' : undefined });
+    const status = err.status || err.statusCode || (err.type === 'entity.parse.failed' ? 400 : 500);
+    if (status >= 500 && status !== 507) console.error(err);
+    if (res.headersSent) return;
+    res.status(status).json({ error: status === 500 ? 'Erreur interne' : err.message, ...(err.extra || {}) });
   });
 
   return app;

@@ -27,11 +27,11 @@ export default function Login({ configured, onLoggedIn }) {
     <div className="login-screen">
       <form className="login-card" onSubmit={submit}>
         <div className="login-brand">
-          <span className="logo" aria-hidden="true" />
-          <span>Cals</span>
+          <span className="logo" aria-hidden="true"><Icon name="play" size={14} /></span>
+          <span>Animés</span>
         </div>
         <h1>Connexion</h1>
-        <p className="muted">Suivi nutritionnel et recomposition corporelle</p>
+        <p className="muted">Nos épisodes, en VOSTFR, pour toute la famille</p>
 
         {!configured && (
           <p className="alert">Aucun identifiant n'est encore défini sur le serveur. Sur le VPS :<br />

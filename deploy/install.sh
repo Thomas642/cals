@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ════════════════════════════════════════════════════════════════════════════
-#  Cals — premiere installation sur le VPS (Ubuntu/Debian, Docker deja installe)
+#  Animes — premiere installation sur le VPS (Ubuntu/Debian, Docker deja installe)
 #
 #  Usage (depot prive : cloner d'abord avec ses identifiants GitHub) :
 #    git clone git@github.com:Thomas642/cals.git ~/cals
@@ -53,8 +53,6 @@ say "Fichier .env"
 if [[ ! -f .env ]]; then
   cp .env.example .env
   sed -i "s/^CALS_HTTP_PORT=.*/CALS_HTTP_PORT=$PORT/" .env
-  read -rp "Cle API Gemini (https://aistudio.google.com, Entree pour laisser l'IA desactivee) : " KEY || true
-  if [[ -n "${KEY:-}" ]]; then sed -i "s|^GEMINI_API_KEY=.*|GEMINI_API_KEY=$KEY|" .env; fi
   if [[ "$MODE" == "tunnel" ]]; then
     read -rp "Jeton du tunnel Cloudflare (Entree si un cloudflared tourne deja sur le VPS) : " TOK || true
     if [[ -n "${TOK:-}" ]]; then sed -i "s|^CLOUDFLARE_TUNNEL_TOKEN=.*|CLOUDFLARE_TUNNEL_TOKEN=$TOK|" .env; fi
@@ -75,7 +73,7 @@ for i in $(seq 1 30); do
   if curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then ok=1; break; fi
   sleep 2
 done
-[[ "${ok:-}" == 1 ]] || fail "Cals ne repond pas sur 127.0.0.1:$PORT (voir : docker compose logs)"
+[[ "${ok:-}" == 1 ]] || fail "Le site ne repond pas sur 127.0.0.1:$PORT (voir : docker compose logs)"
 curl -fsS "http://127.0.0.1:$PORT/api/health"; echo
 
 if [[ "$MODE" == "nginx" ]]; then
@@ -103,7 +101,7 @@ politique "Allow" limitee a ton adresse e-mail.
 TXT
 fi
 
-say "Identifiant de connexion a Cals"
+say "Identifiant de connexion au site"
 if docker compose exec -T backend node -e "const D=require('better-sqlite3');const d=new D(process.env.DB_PATH);process.exit(d.prepare('SELECT 1 FROM auth_user').get()?0:1)" 2>/dev/null; then
   echo "Identifiant deja defini (pour le changer : docker compose exec backend node src/set-password.js <identifiant>)."
 else

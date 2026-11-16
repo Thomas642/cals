@@ -10,8 +10,8 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY src ./src
-ENV NODE_ENV=production PORT=3000 DB_PATH=/data/cals.db
-RUN mkdir -p /data && chown node:node /data
+ENV NODE_ENV=production PORT=3000 DB_PATH=/data/cals.db MEDIA_DIR=/data/media
+RUN mkdir -p /data/media && chown -R node:node /data
 VOLUME /data
 EXPOSE 3000
 USER node

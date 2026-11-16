@@ -1,10 +1,11 @@
-# Cals
+# Animés
 
-Application web personnelle (mono-utilisateur) de recomposition corporelle : calcul des besoins,
-suivi calories/macros, base d'aliments sourcée, assistant IA nutritionnel, recettes, routines
-et programme d'entraînement.
+Site web privé pour regarder en famille des épisodes d'anime avec sous-titres français.
+On crée une série, on y importe les vidéos des épisodes, puis les fichiers de sous-titres.
+Le lecteur affiche les sous-titres, mémorise la position de lecture (par navigateur) et propose l'épisode suivant.
 
-La spécification complète est dans [`docs/cals-gdd-v2.md`](docs/cals-gdd-v2.md) (GDD v2).
+Ce dépôt contenait auparavant l'application nutrition « Cals ». Le code a été remplacé ; l'infrastructure
+(Docker Compose, nginx, tunnel Cloudflare, écran de connexion, scripts de déploiement) est conservée.
 
 ## Stack
 
@@ -12,93 +13,138 @@ La spécification complète est dans [`docs/cals-gdd-v2.md`](docs/cals-gdd-v2.md
 |---|---|
 | Frontend | React 19 (SPA, Vite), servi par nginx |
 | Backend | Node.js 22 + Express 5 |
-| Base de données | SQLite (`better-sqlite3`), fichier sur volume Docker |
-| IA | Google Gemini (`gemini-3.6-flash` par défaut) ou Anthropic Claude (`claude-haiku-4-5`), appelé uniquement par le backend |
-| Déploiement | Docker Compose (frontend nginx, backend, volume SQLite, tunnel Cloudflare optionnel) |
+| Base de données | SQLite (`better-sqlite3`) : séries, épisodes, pistes de sous-titres, identifiants |
+| Fichiers | Vidéos et sous-titres sur le volume Docker `cals-data` (`/data/media`) |
+| Déploiement | Docker Compose (frontend nginx, backend, tunnel Cloudflare optionnel) |
 
 ## Arborescence
 
 ```
 backend/
-  src/schema.sql          schéma SQLite (section 3 du GDD + routines + journal de charges)
-  src/seed-data.js        aliments de l'annexe A
-  src/lib/calc.js         moteur de calcul (section 4)
-  src/lib/assistant.js    intégration IA Gemini / Claude (section 6)
-  src/app.js              routes REST (section 5)
+  src/schema.sql          tables series, episode, subtitle, auth_user, auth_session
+  src/app.js              routes REST, envoi des vidéos par morceaux, lecture (Range)
+  src/lib/subtitles.js    conversion SRT / ASS / SSA -> WebVTT
+  src/lib/auth.js         connexion (mot de passe scrypt, session par cookie)
   test/                   tests (node:test)
 frontend/
-  src/pages/              écrans (section 8)
-  src/data/program.js     programme 5 séances (annexe C)
-deploy/
-  install.sh              première installation sur le VPS
-  update.sh / backup.sh   mise à jour, sauvegarde
-  nginx/cals.conf         bloc nginx pour gameone-val.com
-docs/cals-gdd-v2.md       spécification
+  src/pages/              Bibliothèque, Série (import), Regarder (lecteur)
+  src/uploads.js          file d'envoi : morceaux de 16 Mo, reprise automatique
+  src/files.js            numéro d'épisode deviné depuis le nom du fichier, encodage des sous-titres
+deploy/                   installation, mise à jour, sauvegarde, bloc nginx hôte
 ```
+
+## Utilisation
+
+1. **Bibliothèque > Nouvelle série** : donner un titre.
+2. Sur la page de la série, **glisser les vidéos** dans la zone d'import (ou cliquer pour les choisir).
+   Un épisode est créé par fichier et l'envoi démarre. On peut changer de page pendant l'envoi
+   (panneau en bas à droite) ; fermer l'onglet l'interrompt.
+3. **Sous-titres** : glisser les fichiers dans la même zone, ou utiliser le bouton « + Sous-titres » d'un épisode.
+   Plusieurs pistes par épisode sont possibles (ex. français et anglais).
+
+**Numéro d'épisode** : il est lu dans le nom du fichier, par exemple `[Groupe] Titre - 03 [1080p].mkv`,
+`Titre S01E03.mp4`, `Titre 第3話.mp4`, `Titre_03_VOSTFR.mkv` → épisode 3. Un sous-titre `Titre - 03.srt` est
+rattaché à l'épisode 3. Si aucun numéro n'est trouvé, la vidéo prend le numéro suivant ; le numéro et le titre
+se modifient avec le crayon.
+
+**Langue de la piste** : `.fr.`, `.en.`/`.eng.`, `.ja.`/`.jpn.` dans le nom du fichier ; français par défaut.
+
+### Formats
+
+| Type | Formats acceptés | Remarques |
+|---|---|---|
+| Vidéo | mp4, m4v, webm, mkv, mov | Le navigateur lit la vidéo telle quelle (pas de conversion sur le serveur). **MP4 avec vidéo H.264 et son AAC** est le format le plus compatible. Les MKV et les vidéos HEVC/H.265 ne sont pas lus par tous les navigateurs : le lecteur affiche un message dans ce cas. |
+| Sous-titres | srt, vtt, ass, ssa | Convertis en WebVTT à l'import. Pour ASS/SSA, seul le texte est gardé (styles, positions et effets ignorés). Encodages lus : UTF-8, UTF-16, et Windows-1252 en repli (anciens SRT français). |
+
+Les sous-titres intégrés à l'intérieur d'un fichier MKV ne sont pas lus : il faut les importer comme fichier séparé.
+
+### Envoi des vidéos
+
+Les vidéos partent par morceaux de 16 Mo (`PUT /api/episodes/:id/upload?offset=`). Après une coupure réseau,
+l'envoi reprend tout seul à partir du dernier octet reçu (6 essais). Si l'onglet a été fermé, l'épisode
+affiche « Envoi incomplet » avec un bouton pour reprendre en sélectionnant le même fichier.
+Si un proxy refuse les morceaux de 16 Mo (réponse 413), le site passe à des morceaux de 1 Mo, plus lents.
+
+Taille maximale d'une vidéo : 20 Go (`MAX_VIDEO_GB` dans `.env`). L'import est refusé s'il ne reste pas
+assez d'espace disque sur le serveur (taille du fichier + 512 Mo).
 
 ## Développement local
 
 ```bash
-# API (port 3000). Base créée dans backend/data/cals.db, seed automatique au premier démarrage.
-cd backend && npm install && npm run dev
-
-# Front (port 5173, proxy /api vers le port 3000)
-cd frontend && npm install && npm run dev
+cd backend && npm install && npm run dev      # API sur le port 3000, base et médias dans backend/data/
 ```
 
-Pour activer l'assistant : `GEMINI_API_KEY=... npm run dev` (ou `ANTHROPIC_API_KEY=...`) côté backend.
-Sans clé, l'application reste utilisable ; l'écran Assistant indique qu'il est désactivé (mode dégradé, section 6.5).
+```bash
+cd frontend && npm install && npm run dev     # front sur le port 5173, proxy /api vers le port 3000
+```
+
+```bash
+cd backend && CALS_PASSWORD=motdepasse node src/set-password.js moi   # identifiants de test
+```
 
 Tests backend : `cd backend && npm test`.
 
 ## Déploiement sur le VPS (gameone-val.com)
 
-Cals tourne dans ses propres conteneurs (projet Docker Compose `cals`) et n'écoute qu'en local sur
-`127.0.0.1:8080`. Il ne touche ni aux autres conteneurs ni aux autres sites nginx du VPS
-(dont `famille.gameone-val.com`) : un bloc `server` dédié à `gameone-val.com` est ajouté.
+Le projet Docker Compose s'appelle toujours `cals`, s'installe dans `~/cals` et écoute sur
+`127.0.0.1:8080`. Il ne touche pas aux autres conteneurs ni aux autres sites nginx du VPS.
 
-### Prérequis sur le VPS
+### Passage de Cals au site Animés (installation existante)
 
-- Docker + plugin `docker compose`, `git`
-- Mode `nginx` : nginx système et Certbot (`sudo apt install nginx certbot python3-certbot-nginx`)
-- DNS Cloudflare : enregistrements `gameone-val.com` et `www` vers le VPS (ou vers le tunnel)
+```bash
+bash ~/cals/deploy/update.sh
+```
 
-### Installation (une seule fois)
+- L'identifiant et le mot de passe de connexion restent les mêmes (même fichier `cals.db`).
+- Les anciennes tables de Cals restent dans `cals.db` mais ne sont plus lues ; rien n'est effacé.
+- Les clés `GEMINI_*` / `ANTHROPIC_*` de `.env` ne servent plus et peuvent être retirées.
+
+**nginx de l'hôte (mode nginx)** : `update.sh` ne modifie pas `/etc/nginx/sites-available/cals`, qui
+limite les requêtes à 2 Mo. Le site fonctionne quand même (morceaux de 1 Mo), mais pour des envois plus
+rapides et une lecture en flux direct :
+
+```bash
+sudo sed -i -e 's/client_max_body_size 2M;/client_max_body_size 70M;/' -e 's/proxy_read_timeout 120s;/proxy_read_timeout 3600s;\n        proxy_request_buffering off;\n        proxy_buffering off;/' /etc/nginx/sites-available/cals
+```
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+### Première installation
 
 Le dépôt est privé : le cloner avec ses identifiants GitHub, puis lancer le script depuis le clone.
 
 ```bash
-git clone git@github.com:Thomas642/cals.git ~/cals          # clé SSH GitHub sur le VPS
-# ou : git clone https://github.com/Thomas642/cals.git ~/cals  (jeton d'accès personnel comme mot de passe)
+git clone git@github.com:Thomas642/cals.git ~/cals
+```
 
+```bash
 MODE=nginx bash ~/cals/deploy/install.sh     # nginx système + Certbot
-# ou
+```
+
+ou
+
+```bash
 MODE=tunnel bash ~/cals/deploy/install.sh    # tunnel Cloudflare Zero Trust
 ```
 
-Le script :
-1. clone le dépôt dans `~/cals` (modifiable avec `APP_DIR=...`) ;
-2. crée `.env` (demande la clé API Gemini, facultative) ;
-3. construit et démarre les conteneurs, puis vérifie `http://127.0.0.1:8080/api/health` ;
-4. mode `nginx` : installe `deploy/nginx/cals.conf` dans `/etc/nginx/sites-available/cals`,
-   recharge nginx, lance Certbot ;
-   mode `tunnel` : affiche le « Public Hostname » à ajouter dans Zero Trust ;
-5. demande l'identifiant et le mot de passe de connexion à Cals ;
-6. programme la sauvegarde quotidienne (cron, 3 h).
-
-Si le port 8080 est déjà pris sur le VPS : `PORT=8090 MODE=nginx bash install.sh`.
+Le script crée `.env`, construit et démarre les conteneurs, vérifie `http://127.0.0.1:8080/api/health`,
+installe le bloc nginx (mode `nginx`) ou affiche le « Public Hostname » à ajouter (mode `tunnel`),
+demande l'identifiant et le mot de passe, et programme la sauvegarde quotidienne (cron, 3 h).
+Si le port 8080 est déjà pris : `PORT=8090 MODE=nginx bash install.sh`.
 
 ### Connexion
 
-Cals affiche son propre écran de connexion (identifiant + mot de passe). Après connexion, une
-session est gardée par cookie sécurisé (`HttpOnly`, `SameSite=Lax`, `Secure` en HTTPS) :
-90 jours avec « Rester connecté », sinon jusqu'à la fermeture du navigateur. Le mot de passe est
-stocké haché (scrypt). 5 échecs depuis une même IP bloquent les tentatives 15 minutes.
+Un seul identifiant pour le site, à partager avec la famille. Session gardée par cookie sécurisé
+(`HttpOnly`, `SameSite=Lax`, `Secure` en HTTPS) : 90 jours avec « Rester connecté ». Mot de passe haché
+(scrypt). 5 échecs depuis une même IP bloquent les tentatives 15 minutes.
 
 ```bash
-# définir ou changer l'identifiant et le mot de passe (déconnecte toutes les sessions)
 docker compose -f ~/cals/docker-compose.yml exec backend node src/set-password.js <identifiant>
 ```
+
+(change l'identifiant et le mot de passe et déconnecte toutes les sessions)
 
 ### Cloudflare et HTTPS (mode nginx)
 
@@ -106,106 +152,47 @@ docker compose -f ~/cals/docker-compose.yml exec backend node src/set-password.j
 - Si Certbot échoue derrière le proxy Cloudflare, passer temporairement les enregistrements DNS
   `gameone-val.com` et `www` en « DNS only » (nuage gris), relancer
   `sudo certbot --nginx -d gameone-val.com -d www.gameone-val.com`, puis les repasser en « Proxied ».
+- Diffuser de la vidéo à travers le proxy Cloudflare est encadré par les conditions d'utilisation de
+  Cloudflare ; les relire avant de partager le site largement (elles peuvent avoir changé).
 
-### Mise à jour, sauvegarde
+### Mise à jour, sauvegarde, espace disque
 
 ```bash
 bash ~/cals/deploy/update.sh    # sauvegarde, git pull, reconstruction, vérification
-bash ~/cals/deploy/backup.sh    # sauvegarde manuelle -> ~/cals/backups (30 dernières conservées)
-docker compose -f ~/cals/docker-compose.yml logs -f backend   # journaux
 ```
-
-Un export JSON complet est aussi disponible dans Réglages (`GET /api/export`).
-
-### Ancien dossier FamilyTracker
-
-Ce dépôt contenait auparavant FamilyTracker. Si un clone de ce dépôt sert encore un site sur le VPS
-(l'ancienne configuration utilisait `/home/ubuntu/FamilyTracker`), **ne pas y faire de `git pull`** :
-il récupérerait Cals à la place de l'ancien code. Cals s'installe dans un dossier séparé (`~/cals`).
-
-## Assistant IA : Gemini ou Claude
-
-Le fournisseur est choisi selon la clé présente dans `.env` (Gemini prioritaire), ou forcé avec
-`AI_PROVIDER=gemini|anthropic`. Sans clé, l'assistant est désactivé et le reste de l'app fonctionne.
-
-- **Gemini** (défaut) : clé à créer sur Google AI Studio (https://aistudio.google.com, « Get API key »).
-  Modèle par défaut `gemini-3.6-flash`, modifiable avec `GEMINI_MODEL`. Le 23/09/2026, l'API a
-  répondu pour `gemini-2.5-flash` : « no longer available to new users », en recommandant
-  `gemini-3.6-flash`. Liste des modèles accessibles avec sa clé :
-  `curl -s "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=$KEY"`.
-  Si Google renvoie une erreur temporaire (500/502/503/504) 2 fois de suite, ou si le modèle est
-  introuvable (404), l'assistant essaie les modèles de `GEMINI_FALLBACK_MODELS`
-  (défaut `gemini-3.7-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.8-flash`). Le 23/09/2026, `gemini-3.6-flash`, `gemini-3.7-flash` et
-  `gemini-3.8-flash` ont renvoyé 503 « high demand » en niveau gratuit.
-  D'après la page de tarifs Gemini consultée le 23/09/2026, ce modèle figure dans le niveau gratuit, et
-  pour ce niveau : « Content used to improve our products » (contenu utilisé par Google pour améliorer
-  ses produits) ; en niveau payant : « Content not used to improve our products ». Les questions
-  envoyées contiennent le profil (sexe, âge, poids, cibles) et le journal du jour.
-  Les quotas du niveau gratuit sont limités ; en cas de dépassement l'assistant affiche
-  « Quota Gemini atteint » et la saisie manuelle reste disponible.
-- **Claude** : clé sur https://console.anthropic.com, modèle `claude-haiku-4-5` (`CLAUDE_MODEL`).
-
-Ajouter ou changer la clé après installation :
 
 ```bash
-nano ~/cals/.env                                  # GEMINI_API_KEY=...
-docker compose -f ~/cals/docker-compose.yml up -d
+bash ~/cals/deploy/backup.sh    # sauvegarde de la base -> ~/cals/backups (30 dernières conservées)
 ```
+
+```bash
+docker compose -f ~/cals/docker-compose.yml logs -f backend
+```
+
+La sauvegarde ne copie que la base SQLite (séries, épisodes, pistes, identifiants), **pas les vidéos**.
+Les vidéos et sous-titres sont dans le volume Docker `cals_cals-data` ; l'espace libre du serveur est affiché
+en bas de la Bibliothèque. Ne pas lancer `docker compose down -v` : l'option `-v` supprime ce volume.
 
 ## API
 
-Routes du GDD (section 5) : `/api/profile`, `/api/foods`, `/api/journal`, `/api/recipes`, `/api/weights`, `/api/assistant`.
-
-Routes ajoutées pour les phases 1, 3 et 4 :
+Toutes les routes sauf `/api/health` et `/api/auth/*` exigent une session.
 
 | Méthode | Route | Rôle |
 |---|---|---|
-| GET | /api/health | État de l'API et de l'IA |
-| GET | /api/stats?end= | Totaux journaliers 30 j, adhérence 7/30 j, poids + moyenne glissante 7 j |
-| DELETE | /api/weights/:id | Supprimer une mesure |
-| GET | /api/recipes/:id | Détail d'une recette |
-| POST | /api/recipes/:id/log | Ajouter une recette au journal (valeurs par portion figées) |
-| GET/POST/DELETE | /api/routines | Routines réutilisables (créées depuis les entrées d'un jour) |
-| POST | /api/routines/:id/log | Appliquer une routine à une date |
-| GET/POST/DELETE | /api/workouts | Journal de charges |
-| GET | /api/export | Export JSON de toutes les tables |
+| GET | /api/health | État de l'API |
+| GET / POST | /api/auth/status, /api/auth/login, /api/auth/logout | Connexion |
+| GET | /api/storage | Espace disque libre, volume des vidéos |
+| GET / POST | /api/series | Liste (avec nombre d'épisodes) / création `{ title, description }` |
+| GET / PUT / DELETE | /api/series/:id | Détail avec épisodes et pistes / modification / suppression (fichiers compris) |
+| POST | /api/series/:id/episodes | Annonce d'une vidéo `{ filename, size, number?, title? }` |
+| GET / PUT / DELETE | /api/episodes/:id | Détail (avec épisodes précédent/suivant) / numéro et titre / suppression |
+| PUT | /api/episodes/:id/upload?offset=N | Morceau de vidéo (corps brut, 64 Mo max). 409 + `received` si la position est fausse |
+| POST | /api/episodes/:id/subtitles | `{ filename, content, label?, lang? }`, converti en WebVTT |
+| DELETE | /api/subtitles/:id | Suppression d'une piste |
+| GET | /api/media/video/:id | Lecture de la vidéo (requêtes partielles `Range`) |
+| GET | /api/media/subtitle/:id | Piste WebVTT |
 
-`POST /api/journal` accepte soit `{ date, food_id, quantity }` (valeurs calculées depuis la base),
-soit une entrée complète (`display_name, quantity, unit, kcal, protein_g, …, origin`). Les deux passent
-la même validation (types, bornes, cohérence unité/quantité), y compris les entrées proposées par l'IA.
+## Suite prévue
 
-## Choix d'implémentation
-
-Paramètres que le GDD donne sous forme de fourchette, fixés ici (modifiables dans `backend/src/lib/calc.js`) :
-
-| Paramètre | Fourchette GDD | Valeur retenue |
-|---|---|---|
-| Surplus `gain` | 5 à 15 % | light 5 %, moderate 10 %, aggressive 15 % |
-| Protéines `fat_loss` | 2,0 à 2,2 g/kg | 2,2 g/kg |
-| Protéines `maintain` / `gain` | 1,6 à 2,2 g/kg | 1,8 g/kg |
-| Lipides | 0,8 à 1 g/kg | 0,8 g/kg |
-| Glucides | reste des calories | (kcal − 4 × P − 9 × L) / 4 |
-
-Autres décisions :
-
-- **Données de l'annexe A** : l'annexe ne fournit ni glucides ni lipides ; ces champs sont laissés vides
-  (aucune valeur inventée). Les jauges glucides/lipides indiquent le nombre d'entrées sans valeur.
-  Pain de mie et cancoillotte sont marqués « estimé » (protéines estimées selon l'annexe).
-- **Valeurs figées** : une entrée de journal copie ses valeurs à la saisie ; modifier ou supprimer
-  l'aliment de référence ne la change pas.
-- **Cibles manuelles** : colonne `manual_targets` ajoutée à `profile` ; quand elle est active, les
-  changements de poids ne recalculent plus les cibles. Plancher de validation : 1000 kcal.
-- **Poids** : une mesure par jour ; la plus récente devient le poids du profil et déclenche le recalcul.
-- **Adhérence** : calculée sur les jours comportant au moins une entrée.
-- **Assistant** : prompt système de la section 6.4 repris tel quel ; contrat JSON de la section 6.3
-  imposé par les sorties structurées (Gemini : `responseJsonSchema` ; Claude : `output_config.format`)
-  puis revalidé côté serveur ; les
-  propositions invalides sont rejetées et signalées. L'historique de conversation (10 derniers
-  messages) est renvoyé par le front à chaque appel.
-- **Prompt caching (Claude uniquement)** : `cache_control` est posé sur le bloc « prompt système + base d'aliments ».
-  D'après la documentation Anthropic, le préfixe minimal cachable pour Claude Haiku 4.5 est de
-  4096 tokens : avec la base de 19 aliments le préfixe est plus court et le cache ne s'active pas ;
-  il s'activera quand la base aura grossi. Vérifiable via `usage.cache_read_input_tokens` dans la
-  réponse de `/api/assistant`.
-- Tarifs, quotas gratuits et noms de modèles évoluent : vérifier https://ai.google.dev/gemini-api/docs/pricing
-  et https://claude.com/pricing avant mise en production.
+Génération automatique des sous-titres français depuis l'audio japonais (transcription puis traduction),
+à brancher sur l'import de sous-titres existant.
