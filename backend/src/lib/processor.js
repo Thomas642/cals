@@ -24,6 +24,32 @@ export function createProcessor(db, { mediaDir, enabled = process.env.VIDEO_PROC
     try { const s = fs.statfsSync(mediaDir); return s.bavail * s.bsize; } catch { return null; }
   }
 
+  // Miniature (vraie image de l'episode, independante des codecs du navigateur).
+  async function makeThumbnail(id, duration) {
+    const e = get(id);
+    if (!e || e.thumb_file || e.status !== 'ready') return;
+    let dur = duration;
+    if (dur === undefined) {
+      try { dur = plan(await probe(abs(e.video_file))).duration; } catch { dur = 0; }
+    }
+    const thumb = `images/${crypto.randomUUID()}.jpg`;
+    try {
+      await extractThumbnail(abs(e.video_file), abs(thumb), dur > 0 ? dur * 0.25 : 10);
+      if (get(id) && !get(id).thumb_file) set(id, { thumb_file: thumb }); else fs.rmSync(abs(thumb), { force: true });
+    } catch (err) {
+      fs.rmSync(abs(thumb), { force: true });
+      log.warn?.(`[traitement] miniature episode ${id} : ${err.message}`);
+    }
+  }
+
+  // File rapide : les miniatures passent avant les conversions (quelques secondes chacune).
+  let thumbChain = Promise.resolve();
+  function queueThumbnail(id) {
+    thumbChain = thumbChain.then(async () => {
+      if (await ffmpegAvailable()) await makeThumbnail(id);
+    }).catch(() => {});
+  }
+
   async function handle(id) {
     let e = get(id);
     if (!e || e.status !== 'ready') return;
@@ -36,17 +62,8 @@ export function createProcessor(db, { mediaDir, enabled = process.env.VIDEO_PROC
     const prev = e.media_info ? JSON.parse(e.media_info) : {};
     set(id, { media_info: JSON.stringify({ ...prev, ...media }) });
 
-    // Miniature (vraie image de l'episode, independante des codecs du navigateur).
-    if (!e.thumb_file && p.video) {
-      const thumb = `images/${crypto.randomUUID()}.jpg`;
-      try {
-        await extractThumbnail(input, abs(thumb), p.duration > 0 ? p.duration * 0.25 : 10);
-        if (get(id)) set(id, { thumb_file: thumb }); else fs.rmSync(abs(thumb), { force: true });
-      } catch (err) {
-        fs.rmSync(abs(thumb), { force: true });
-        log.warn?.(`[traitement] miniature episode ${id} : ${err.message}`);
-      }
-    }
+    // Miniature : normalement deja faite par la file rapide ; sinon ici.
+    if (!get(id)?.thumb_file && p.video) await makeThumbnail(id, p.duration);
 
     // Sous-titres texte integres (MKV de fansub, par exemple) : ajoutes comme pistes, une seule fois.
     if (!prev.subs_extracted) {
@@ -123,14 +140,16 @@ export function createProcessor(db, { mediaDir, enabled = process.env.VIDEO_PROC
 
   function enqueue(id) {
     if (!enabled || queue.includes(id)) return;
+    if (!get(id)?.thumb_file) queueThumbnail(id);
     set(id, { processing: 'queued', processing_progress: 0, processing_error: null });
     queue.push(id);
     pump();
   }
 
-  /** Au demarrage : episodes en ligne jamais traites, ou interrompus. */
+  /** Au demarrage : miniatures manquantes, puis episodes jamais traites ou interrompus. */
   function resume() {
     if (!enabled) return;
+    db.prepare("SELECT id FROM episode WHERE status = 'ready' AND thumb_file IS NULL").all().forEach((r) => queueThumbnail(r.id));
     const rows = db.prepare(`SELECT id FROM episode WHERE status = 'ready'
       AND (processing IS NULL OR processing IN ('queued', 'running')) ORDER BY series_id, number, id`).all();
     rows.forEach((r) => enqueue(r.id));

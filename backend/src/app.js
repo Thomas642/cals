@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
-import { createAuth } from './lib/auth.js';
+import { ROLES, createAuth, hashPassword, validatePassword, validateUsername, verifyPassword } from './lib/auth.js';
 import { SUBTITLE_EXTENSIONS, toWebVtt } from './lib/subtitles.js';
 import { createProcessor } from './lib/processor.js';
 
@@ -159,6 +159,123 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
   // Toutes les routes suivantes exigent une session.
   r.use(auth.requireSession);
 
+  // Spectateurs : lecture seule (series, episodes, medias) + leur progression et leur mot de passe.
+  r.use((req, res, next) => {
+    if (req.user.role === 'admin') return next();
+    if (req.method === 'GET' && !/^\/(storage|users)(\/|$)/.test(req.path)) return next();
+    if (/^\/progress\/\d+$/.test(req.path) && ['PUT', 'DELETE'].includes(req.method)) return next();
+    if (req.path === '/me/password' && req.method === 'PUT') return next();
+    return auth.requireAdmin(req, res, next);
+  });
+  const isAdmin = (req) => req.user.role === 'admin';
+  // Ce qu'un spectateur voit d'un episode : pas de details techniques ni de nom de fichier.
+  const viewFor = (req, e) => {
+    const v = episodeView(e);
+    if (isAdmin(req)) return v;
+    const { original_name: _o, media: _m, processing_error: _p, received: _r, ...rest } = v;
+    return rest;
+  };
+
+  // ---------- Mon compte ----------
+  r.put('/me/password', (req, res) => {
+    const { current, password } = req.body || {};
+    if (typeof current !== 'string' || !verifyPassword(current, req.user.password_hash)) throw httpError(400, 'Mot de passe actuel incorrect');
+    validatePassword(password);
+    db.prepare("UPDATE app_user SET password_hash = ?, updated_at = datetime('now') WHERE id = ?").run(hashPassword(password), req.user.id);
+    res.status(204).end();
+  });
+
+  // ---------- Progression de lecture (par compte) ----------
+  r.get('/progress', (req, res) => {
+    const rows = db.prepare(`SELECT p.episode_id, p.pos, p.dur, p.watched, p.updated_at, e.number, e.title, e.series_id, e.thumb_file,
+        s.title AS series_title
+      FROM watch_progress p JOIN episode e ON e.id = p.episode_id JOIN series s ON s.id = e.series_id
+      WHERE p.user_id = ? AND e.status = 'ready' ORDER BY p.updated_at DESC`).all(req.user.id);
+    res.json(rows.map(({ thumb_file: t, ...p }) => ({
+      ...p, watched: !!p.watched,
+      thumb_url: t ? `/api/media/thumb/${p.episode_id}?v=${path.basename(t, path.extname(t)).slice(0, 8)}` : null,
+    })));
+  });
+
+  r.put('/progress/:id', (req, res) => {
+    const e = getEpisode(id(req.params.id));
+    if (!e || e.status !== 'ready') throw notFound('Episode');
+    const pos = Number(req.body?.pos);
+    const dur = Number(req.body?.dur);
+    if (!Number.isFinite(pos) || pos < 0 || !Number.isFinite(dur) || dur < 0 || dur > 86400) throw httpError(400, 'Position invalide');
+    // Vu : plus de 95 % regardes, ou moins de 90 s restantes sur un episode de plus de 10 min (generique de fin).
+    const watched = req.body?.watched === true || (dur > 0 && (pos / dur > 0.95 || (dur > 600 && dur - pos < 90)));
+    const prev = db.prepare('SELECT watched FROM watch_progress WHERE user_id = ? AND episode_id = ?').get(req.user.id, e.id);
+    db.prepare(`INSERT INTO watch_progress (user_id, episode_id, pos, dur, watched, updated_at) VALUES (?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(user_id, episode_id) DO UPDATE SET pos = excluded.pos, dur = excluded.dur, watched = excluded.watched, updated_at = excluded.updated_at`)
+      .run(req.user.id, e.id, watched ? 0 : Math.floor(pos), Math.floor(dur), watched || prev?.watched ? 1 : 0);
+    res.status(204).end();
+  });
+
+  r.delete('/progress/:id', (req, res) => {
+    db.prepare('DELETE FROM watch_progress WHERE user_id = ? AND episode_id = ?').run(req.user.id, id(req.params.id));
+    res.status(204).end();
+  });
+
+  // ---------- Comptes (administrateurs) ----------
+  const listUsers = () => db.prepare(`SELECT u.id, u.username, u.display_name, u.role, u.disabled, u.created_at,
+      (SELECT MAX(updated_at) FROM watch_progress p WHERE p.user_id = u.id) AS last_watch
+    FROM app_user u ORDER BY u.role, u.username COLLATE NOCASE`).all().map((u) => ({ ...u, disabled: !!u.disabled }));
+  const activeAdmins = () => db.prepare("SELECT COUNT(*) AS n FROM app_user WHERE role = 'admin' AND disabled = 0").get().n;
+  const getUser = (uid) => db.prepare('SELECT * FROM app_user WHERE id = ?').get(uid);
+  const displayName = (v) => text(v, { field: 'Nom affiché', max: 60 });
+  const role = (v) => {
+    if (!ROLES.includes(v)) throw httpError(400, 'Rôle invalide');
+    return v;
+  };
+
+  r.get('/users', (req, res) => res.json(listUsers()));
+
+  r.post('/users', (req, res) => {
+    const username = validateUsername(req.body?.username);
+    const password = validatePassword(req.body?.password);
+    if (db.prepare('SELECT 1 FROM app_user WHERE username = ?').get(username)) throw httpError(409, 'Cet identifiant existe déjà');
+    const info = db.prepare('INSERT INTO app_user (username, display_name, password_hash, role) VALUES (?, ?, ?, ?)')
+      .run(username, displayName(req.body?.display_name), hashPassword(password), role(req.body?.role ?? 'viewer'));
+    res.status(201).json(listUsers().find((u) => u.id === info.lastInsertRowid));
+  });
+
+  r.put('/users/:id', (req, res) => {
+    const u = getUser(id(req.params.id));
+    if (!u) throw notFound('Compte');
+    const b = req.body || {};
+    const next = {
+      display_name: 'display_name' in b ? displayName(b.display_name) : u.display_name,
+      role: 'role' in b ? role(b.role) : u.role,
+      disabled: 'disabled' in b ? (b.disabled ? 1 : 0) : u.disabled,
+    };
+    const losesAdmin = u.role === 'admin' && !u.disabled && (next.role !== 'admin' || next.disabled);
+    if (losesAdmin && activeAdmins() <= 1) throw httpError(409, 'Il faut garder au moins un administrateur actif');
+    if (u.id === req.user.id && next.disabled) throw httpError(409, 'Tu ne peux pas désactiver ton propre compte');
+    db.transaction(() => {
+      db.prepare("UPDATE app_user SET display_name = ?, role = ?, disabled = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(next.display_name, next.role, next.disabled, u.id);
+      if (b.password !== undefined && b.password !== '') {
+        db.prepare('UPDATE app_user SET password_hash = ? WHERE id = ?').run(hashPassword(validatePassword(b.password)), u.id);
+      }
+      // Mot de passe change ou compte desactive : deconnexion de ses appareils (sauf la session en cours).
+      if ((b.password || next.disabled) && u.id !== req.user.id) db.prepare('DELETE FROM auth_session WHERE user_id = ?').run(u.id);
+    })();
+    res.json(listUsers().find((x) => x.id === u.id));
+  });
+
+  r.delete('/users/:id', (req, res) => {
+    const u = getUser(id(req.params.id));
+    if (!u) throw notFound('Compte');
+    if (u.id === req.user.id) throw httpError(409, 'Tu ne peux pas supprimer ton propre compte');
+    if (u.role === 'admin' && !u.disabled && activeAdmins() <= 1) throw httpError(409, 'Il faut garder au moins un administrateur actif');
+    db.transaction(() => {
+      db.prepare('DELETE FROM auth_session WHERE user_id = ?').run(u.id);
+      db.prepare('DELETE FROM app_user WHERE id = ?').run(u.id);
+    })();
+    res.status(204).end();
+  });
+
   r.get('/storage', (req, res) => {
     const used = db.prepare("SELECT COALESCE(SUM(video_size), 0) AS n FROM episode WHERE status = 'ready'").get().n;
     res.json({ free_bytes: freeBytes(), videos_bytes: used, max_video_bytes: maxVideoBytes, max_chunk_bytes: MAX_CHUNK_BYTES });
@@ -182,7 +299,8 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
   r.get('/series/:id', (req, res) => {
     const s = getSeries(id(req.params.id));
     if (!s) throw notFound('Serie');
-    res.json({ ...seriesView(s), episodes: episodesOf(s.id).map(episodeView) });
+    const eps = episodesOf(s.id).filter((e) => isAdmin(req) || e.status === 'ready');
+    res.json({ ...seriesView(s), episodes: eps.map((e) => viewFor(req, e)) });
   });
 
   r.put('/series/:id', (req, res) => {
@@ -250,12 +368,12 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
 
   r.get('/episodes/:id', (req, res) => {
     const e = getEpisode(id(req.params.id));
-    if (!e) throw notFound('Episode');
+    if (!e || (!isAdmin(req) && e.status !== 'ready')) throw notFound('Episode');
     const s = getSeries(e.series_id);
     const ready = episodesOf(e.series_id).filter((x) => x.status === 'ready');
     const i = ready.findIndex((x) => x.id === e.id);
     res.json({
-      ...episodeView(e),
+      ...viewFor(req, e),
       series: { id: s.id, title: s.title, cover_url: coverUrl(s) },
       prev_id: i > 0 ? ready[i - 1].id : null,
       next_id: i >= 0 && i < ready.length - 1 ? ready[i + 1].id : null,
@@ -386,7 +504,8 @@ export function createApp(db, { mediaDir = process.env.MEDIA_DIR || path.join(pr
     const e = getEpisode(id(req.params.id));
     if (!e || e.status !== 'ready') throw notFound('Video');
     res.type(e.video_mime);
-    res.sendFile(abs(e.video_file), { headers: { 'Cache-Control': 'private, max-age=3600' } }, (err) => {
+    // Lecture dans la page uniquement (pas de proposition d'enregistrement par le navigateur).
+    res.sendFile(abs(e.video_file), { headers: { 'Cache-Control': 'private, max-age=3600', 'Content-Disposition': 'inline' } }, (err) => {
       if (err && !res.headersSent) next(err);
     });
   });

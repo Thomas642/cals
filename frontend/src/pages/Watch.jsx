@@ -18,6 +18,9 @@ export default function Watch() {
   const [ended, setEnded] = useState(false);
   const [noPicture, setNoPicture] = useState(false);
   const convertedFrom = useRef(null);
+  const saveRef = useRef(null);
+  // Sortie de la page : on enregistre la position tout de suite.
+  useEffect(() => () => saveRef.current?.(true), [id]);
 
   useEffect(() => { setPlayError(null); setEnded(false); setNoPicture(false); lastSaved.current = 0; }, [id]);
   const processing = ep && (ep.processing === 'queued' || ep.processing === 'running');
@@ -52,10 +55,12 @@ export default function Watch() {
     }
   }
 
-  function save() {
+  function save(force = false) {
     const v = video.current;
-    if (v && v.duration) recordProgress(ep.id, v.currentTime, v.duration, info);
+    if (v && v.duration) recordProgress(ep.id, v.currentTime, v.duration, info, { force });
   }
+
+  saveRef.current = save;
 
   function onTime() {
     const v = video.current;
@@ -79,6 +84,10 @@ export default function Watch() {
           key={ep.video_url}
           ref={video}
           controls
+          // Pas de bouton « Télécharger » ni de menu « Enregistrer la vidéo sous ».
+          controlsList="nodownload"
+          disableRemotePlayback
+          onContextMenu={(ev) => ev.preventDefault()}
           autoPlay
           playsInline
           preload="metadata"
@@ -86,8 +95,8 @@ export default function Watch() {
           src={ep.video_url}
           onLoadedMetadata={onLoaded}
           onTimeUpdate={onTime}
-          onPause={save}
-          onEnded={() => { markWatched(ep.id, info); setEnded(true); }}
+          onPause={() => save(true)}
+          onEnded={() => { markWatched(ep.id, video.current?.duration, info); setEnded(true); }}
           onError={onError}
         >
           {ep.subtitles.map((s) => (

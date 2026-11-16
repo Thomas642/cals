@@ -31,11 +31,11 @@ async function putImage(path, file) {
   return data;
 }
 
-export default function Series() {
+export default function Series({ user }) {
   const { id } = useParams();
   const [poll, setPoll] = useState(false);
   const { data: series, error } = useApi(`/series/${id}`, { refreshMs: poll ? 4000 : 0 });
-  const manage = useManage();
+  const manage = useManage() && user.role === 'admin';
   const jobs = useUploads();
   useProgress();
 
@@ -53,7 +53,12 @@ export default function Series() {
   return (
     <>
       <section className="series-hero">
-        {series.cover_url && <img className="hero-bg" src={series.cover_url} alt="" />}
+        {/* Fond net : image de l'episode a lancer ; sinon l'affiche floutee. */}
+        <div className="hero-media">
+          {(next?.episode.thumb_url || ready.find((e) => e.thumb_url)?.thumb_url)
+            ? <img className="hero-bg kenburns" src={next?.episode.thumb_url || ready.find((e) => e.thumb_url).thumb_url} alt="" />
+            : series.cover_url && <img className="hero-bg blur" src={series.cover_url} alt="" />}
+        </div>
         <div className="hero-shade" />
         <div className="series-hero-inner">
           <BackLink />

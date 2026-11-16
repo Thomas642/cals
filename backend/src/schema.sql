@@ -38,7 +38,30 @@ CREATE TABLE IF NOT EXISTS subtitle (
 CREATE INDEX IF NOT EXISTS idx_episode_series ON episode(series_id);
 CREATE INDEX IF NOT EXISTS idx_subtitle_episode ON subtitle(episode_id);
 
--- Authentification (identifiant unique, sessions par cookie).
+-- Comptes : administrateur (gestion complete) ou spectateur (regarder seulement).
+CREATE TABLE IF NOT EXISTS app_user (
+  id            INTEGER PRIMARY KEY,
+  username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  display_name  TEXT,
+  password_hash TEXT NOT NULL,
+  role          TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('admin', 'viewer')),
+  disabled      INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Progression de lecture par compte (suit la personne d'un appareil a l'autre).
+CREATE TABLE IF NOT EXISTS watch_progress (
+  user_id    INTEGER NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  episode_id INTEGER NOT NULL REFERENCES episode(id) ON DELETE CASCADE,
+  pos        REAL NOT NULL DEFAULT 0,
+  dur        REAL NOT NULL DEFAULT 0,
+  watched    INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, episode_id)
+);
+
+-- Ancienne authentification a identifiant unique : conservee pour la migration vers app_user.
 CREATE TABLE IF NOT EXISTS auth_user (
   id            INTEGER PRIMARY KEY CHECK (id = 1),
   username      TEXT NOT NULL,

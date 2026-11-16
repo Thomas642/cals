@@ -27,7 +27,7 @@ async function call(method, p, body, { withCookie = true, raw, headers = {} } = 
 }
 
 test('authentification : non configuree, refus, connexion, deconnexion', async () => {
-  assert.deepEqual((await call('GET', '/auth/status')).body, { configured: false, authenticated: false, username: null });
+  assert.deepEqual((await call('GET', '/auth/status')).body, { configured: false, authenticated: false, user: null });
   assert.equal((await call('GET', '/series')).status, 401);
   assert.equal((await call('POST', '/auth/login', { username: 'moi', password: 'motdepasse1' })).status, 503);
   setCredentials(db, 'moi', 'motdepasse1');
@@ -177,4 +177,83 @@ test('envoi : un morceau fige est coupe par le suivant, qui reprend a la bonne p
   const done = await put(pos, Buffer.from('efghij'));
   assert.deepEqual(done.body, { received: 10, status: 'ready' });
   assert.equal((await call('GET', `/media/video/${e.id}`)).body.toString(), 'abcdefghij');
+});
+
+test('comptes : creation par un admin, spectateur en lecture seule, progression par compte', async () => {
+  const s = (await call('POST', '/series', { title: 'Comptes' })).body;
+  const e = (await call('POST', `/series/${s.id}/episodes`, { filename: 'c.mp4', size: 3, number: 1 })).body;
+  await call('PUT', `/episodes/${e.id}/upload?offset=0`, undefined, { raw: Buffer.from('abc'), headers: { 'Content-Type': 'application/octet-stream' } });
+  const pending = (await call('POST', `/series/${s.id}/episodes`, { filename: 'p.mp4', size: 3, number: 2 })).body;
+
+  assert.equal((await call('POST', '/users', { username: 'x', password: 'motdepasse2' })).status, 400);
+  assert.equal((await call('POST', '/users', { username: 'lea', password: 'court' })).status, 400);
+  const created = await call('POST', '/users', { username: 'Lea', password: 'motdepasse2', display_name: 'Léa' });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.role, 'viewer');
+  assert.equal((await call('POST', '/users', { username: 'lea', password: 'motdepasse2' })).status, 409);
+  const adminCookie = cookie;
+
+  // Connexion du spectateur (identifiant insensible a la casse).
+  cookie = '';
+  const login = await call('POST', '/auth/login', { username: 'lea', password: 'motdepasse2' });
+  assert.equal(login.status, 200);
+  assert.deepEqual((await call('GET', '/auth/status')).body.user, { id: created.body.id, username: 'Lea', display_name: 'Léa', role: 'viewer' });
+  const detail = (await call('GET', `/series/${s.id}`)).body;
+  assert.deepEqual(detail.episodes.map((x) => x.id), [e.id]); // episode non termine cache
+  assert.equal(detail.episodes[0].original_name, undefined);
+  assert.equal((await call('GET', `/episodes/${pending.id}`)).status, 404);
+  assert.equal((await call('GET', `/media/video/${e.id}`)).headers.get('content-disposition'), 'inline');
+  for (const [m, p, b] of [['POST', '/series', { title: 'Non' }], ['DELETE', `/episodes/${e.id}`], ['PUT', `/series/${s.id}`, { title: 'Non' }],
+    ['GET', '/users'], ['GET', '/storage'], ['POST', `/episodes/${e.id}/subtitles`, { filename: 'a.srt', content: 'x' }]]) {
+    const r = await call(m, p, b);
+    assert.equal(r.status, 403, `${m} ${p}`);
+    assert.equal(r.body.code, 'admin_required');
+  }
+  assert.equal((await call('PUT', `/progress/${e.id}`, { pos: 300, dur: 1440 })).status, 204);
+  const prog = (await call('GET', '/progress')).body;
+  assert.equal(prog.length, 1);
+  assert.equal(prog[0].pos, 300);
+  assert.equal(prog[0].series_title, 'Comptes');
+  assert.equal(prog[0].watched, false);
+  await call('PUT', `/progress/${e.id}`, { pos: 1400, dur: 1440 });
+  assert.equal((await call('GET', '/progress')).body[0].watched, true);
+  assert.equal((await call('PUT', '/me/password', { current: 'faux', password: 'nouveau-mdp' })).status, 400);
+  assert.equal((await call('PUT', '/me/password', { current: 'motdepasse2', password: 'nouveau-mdp' })).status, 204);
+
+  // La progression est propre a chaque compte.
+  cookie = adminCookie;
+  assert.deepEqual((await call('GET', '/progress')).body, []);
+
+  // Desactivation : le spectateur est deconnecte et ne peut plus se connecter.
+  const viewerCookie = login.headers.get('set-cookie').split(';')[0];
+  assert.equal((await call('PUT', `/users/${created.body.id}`, { disabled: true })).body.disabled, true);
+  cookie = viewerCookie;
+  assert.equal((await call('GET', '/series')).status, 401);
+  cookie = '';
+  assert.equal((await call('POST', '/auth/login', { username: 'lea', password: 'nouveau-mdp' }, { withCookie: false })).status, 401);
+  cookie = adminCookie;
+
+  // Garde-fous : dernier administrateur, propre compte.
+  const me = (await call('GET', '/auth/status')).body.user;
+  assert.equal((await call('PUT', `/users/${me.id}`, { role: 'viewer' })).status, 409);
+  assert.equal((await call('DELETE', `/users/${me.id}`)).status, 409);
+  assert.equal((await call('DELETE', `/users/${created.body.id}`)).status, 204);
+});
+
+test('migration : l ancien identifiant unique devient administrateur et garde ses sessions', async () => {
+  const { default: Database } = await import('better-sqlite3');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mig-auth-')), 'old.db');
+  const old = new Database(file);
+  const { hashPassword } = await import('../src/lib/auth.js');
+  old.exec(`CREATE TABLE auth_user (id INTEGER PRIMARY KEY CHECK (id = 1), username TEXT NOT NULL, password_hash TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+    CREATE TABLE auth_session (token_hash TEXT PRIMARY KEY, created_at TEXT NOT NULL DEFAULT (datetime('now')), expires_at TEXT NOT NULL, persistent INTEGER NOT NULL DEFAULT 1);`);
+  old.prepare('INSERT INTO auth_user (id, username, password_hash) VALUES (1, ?, ?)').run('papa', hashPassword('ancien-mdp'));
+  old.prepare("INSERT INTO auth_session (token_hash, expires_at) VALUES ('t', datetime('now', '+1 day'))").run();
+  old.close();
+  const migrated = openDatabase(file);
+  const u = migrated.prepare('SELECT * FROM app_user').get();
+  assert.equal(u.username, 'papa');
+  assert.equal(u.role, 'admin');
+  assert.equal(migrated.prepare('SELECT user_id FROM auth_session').get().user_id, u.id);
+  migrated.close();
 });

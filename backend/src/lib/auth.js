@@ -1,5 +1,6 @@
-// Authentification mono-utilisateur : mot de passe hache (scrypt), sessions en base,
-// cookie HttpOnly. Les identifiants se definissent en ligne de commande (src/set-password.js).
+// Authentification multi-comptes : mot de passe hache (scrypt), sessions en base, cookie HttpOnly.
+// Roles : 'admin' (gestion complete, panneau des comptes) et 'viewer' (regarder seulement).
+// Le premier administrateur se cree en ligne de commande (src/set-password.js).
 import crypto from 'node:crypto';
 
 export const COOKIE = 'cals_session';
@@ -8,6 +9,7 @@ const SHORT_SESSION_DAYS = 1;   // session sans "Rester connecte" (cookie de ses
 const MAX_FAILS = 5;            // tentatives ratees tolerees par IP...
 const LOCK_MINUTES = 15;        // ...avant blocage temporaire
 const GLOBAL_MAX_FAILS = 30;    // echecs toutes IP confondues sur la fenetre (l'IP client peut etre falsifiee)
+export const ROLES = ['admin', 'viewer'];
 
 export function hashPassword(password) {
   const salt = crypto.randomBytes(16);
@@ -22,21 +24,45 @@ export function verifyPassword(password, stored) {
   const actual = crypto.scryptSync(password, Buffer.from(saltHex, 'hex'), expected.length);
   return crypto.timingSafeEqual(actual, expected);
 }
+// Hachage factice : meme temps de calcul quand l'identifiant n'existe pas.
+const DUMMY_HASH = hashPassword(crypto.randomBytes(12).toString('hex'));
 
+const fail = (status, message) => Object.assign(new Error(message), { status });
+
+export function validateUsername(username) {
+  if (typeof username !== 'string' || !/^[\p{L}\p{N}._-]{2,40}$/u.test(username.trim())) {
+    throw fail(400, 'Identifiant invalide : 2 à 40 caractères (lettres, chiffres, point, tiret, tiret bas)');
+  }
+  return username.trim();
+}
+export function validatePassword(password) {
+  if (typeof password !== 'string' || password.length < 8 || password.length > 200) {
+    throw fail(400, 'Mot de passe trop court (8 caractères minimum)');
+  }
+  return password;
+}
+
+/** Cree ou met a jour un administrateur (ligne de commande). Deconnecte ses sessions. */
 export function setCredentials(db, username, password) {
-  if (!username || username.length > 80) throw new Error('Identifiant invalide (1 a 80 caracteres)');
-  if (!password || password.length < 8) throw new Error('Mot de passe trop court (8 caracteres minimum)');
+  const name = validateUsername(username);
+  validatePassword(password);
   db.transaction(() => {
-    db.prepare(`INSERT INTO auth_user (id, username, password_hash, updated_at) VALUES (1, ?, ?, datetime('now'))
-      ON CONFLICT(id) DO UPDATE SET username = excluded.username, password_hash = excluded.password_hash, updated_at = excluded.updated_at`)
-      .run(username, hashPassword(password));
-    db.prepare('DELETE FROM auth_session').run(); // changement de mot de passe : deconnecte partout
+    const existing = db.prepare('SELECT id FROM app_user WHERE username = ?').get(name);
+    if (existing) {
+      db.prepare("UPDATE app_user SET password_hash = ?, role = 'admin', disabled = 0, updated_at = datetime('now') WHERE id = ?")
+        .run(hashPassword(password), existing.id);
+      db.prepare('DELETE FROM auth_session WHERE user_id = ?').run(existing.id);
+    } else {
+      db.prepare("INSERT INTO app_user (username, password_hash, role) VALUES (?, ?, 'admin')").run(name, hashPassword(password));
+    }
   })();
 }
 
 export function isConfigured(db) {
-  return !!db.prepare('SELECT 1 FROM auth_user WHERE id = 1').get();
+  return !!db.prepare("SELECT 1 FROM app_user WHERE role = 'admin' AND disabled = 0").get();
 }
+
+export const publicUser = (u) => u && ({ id: u.id, username: u.username, display_name: u.display_name || null, role: u.role });
 
 const sha256 = (v) => crypto.createHash('sha256').update(v).digest('hex');
 
@@ -63,16 +89,17 @@ export function createAuth(db) {
   const fails = new Map(); // ip -> { count, until }
   let globalFails = [];     // horodatages des echecs recents, toutes IP
 
-  function currentSession(req) {
+  /** Compte connecte (null si pas de session valide ou compte desactive). */
+  function currentUser(req) {
     const token = parseCookies(req.headers.cookie)[COOKIE];
     if (!token) return null;
-    const row = db.prepare("SELECT * FROM auth_session WHERE token_hash = ? AND expires_at > datetime('now')").get(sha256(token));
-    return row || null;
+    return db.prepare(`SELECT u.* FROM auth_session s JOIN app_user u ON u.id = s.user_id
+      WHERE s.token_hash = ? AND s.expires_at > datetime('now') AND u.disabled = 0`).get(sha256(token)) || null;
   }
 
   function status(req) {
-    const user = db.prepare('SELECT username FROM auth_user WHERE id = 1').get();
-    return { configured: !!user, authenticated: !!(user && currentSession(req)), username: user && currentSession(req) ? user.username : null };
+    const user = currentUser(req);
+    return { configured: isConfigured(db), authenticated: !!user, user: publicUser(user) };
   }
 
   function login(req, res, { username, password, remember }) {
@@ -80,31 +107,28 @@ export function createAuth(db) {
     const f = fails.get(ip);
     if (f && f.until > Date.now()) {
       const minutes = Math.ceil((f.until - Date.now()) / 60000);
-      throw Object.assign(new Error(`Trop de tentatives. Reessayer dans ${minutes} min.`), { status: 429 });
+      throw fail(429, `Trop de tentatives. Réessayer dans ${minutes} min.`);
     }
     const windowStart = Date.now() - LOCK_MINUTES * 60000;
     globalFails = globalFails.filter((t) => t > windowStart);
-    if (globalFails.length >= GLOBAL_MAX_FAILS) {
-      throw Object.assign(new Error(`Trop de tentatives. Reessayer dans ${LOCK_MINUTES} min.`), { status: 429 });
-    }
-    const user = db.prepare('SELECT * FROM auth_user WHERE id = 1').get();
-    if (!user) throw Object.assign(new Error('Aucun identifiant configure sur le serveur.'), { status: 503 });
-    const ok = typeof username === 'string' && typeof password === 'string'
-      && username === user.username && verifyPassword(password, user.password_hash);
-    if (!ok) {
+    if (globalFails.length >= GLOBAL_MAX_FAILS) throw fail(429, `Trop de tentatives. Réessayer dans ${LOCK_MINUTES} min.`);
+    if (!isConfigured(db)) throw fail(503, 'Aucun compte administrateur configuré sur le serveur.');
+    const user = typeof username === 'string' ? db.prepare('SELECT * FROM app_user WHERE username = ?').get(username.trim()) : null;
+    const passOk = typeof password === 'string' && verifyPassword(password, user ? user.password_hash : DUMMY_HASH);
+    if (!user || !passOk || user.disabled) {
       const count = (f && f.until <= Date.now() && f.count >= MAX_FAILS ? 0 : f?.count || 0) + 1;
       fails.set(ip, { count, until: count >= MAX_FAILS ? Date.now() + LOCK_MINUTES * 60000 : 0 });
       globalFails.push(Date.now());
-      throw Object.assign(new Error('Identifiant ou mot de passe incorrect.'), { status: 401 });
+      throw fail(401, user && passOk && user.disabled ? 'Ce compte est désactivé.' : 'Identifiant ou mot de passe incorrect.');
     }
     fails.delete(ip);
     const token = crypto.randomBytes(32).toString('base64url');
     const days = remember ? LONG_SESSION_DAYS : SHORT_SESSION_DAYS;
-    db.prepare("INSERT INTO auth_session (token_hash, expires_at, persistent) VALUES (?, datetime('now', ?), ?)")
-      .run(sha256(token), `+${days} days`, remember ? 1 : 0);
+    db.prepare("INSERT INTO auth_session (token_hash, expires_at, persistent, user_id) VALUES (?, datetime('now', ?), ?, ?)")
+      .run(sha256(token), `+${days} days`, remember ? 1 : 0, user.id);
     db.prepare("DELETE FROM auth_session WHERE expires_at <= datetime('now')").run();
     res.setHeader('Set-Cookie', cookieHeader(token, { maxAgeSeconds: remember ? days * 86400 : undefined, secure: isSecure(req) }));
-    return { username: user.username };
+    return publicUser(user);
   }
 
   function logout(req, res) {
@@ -113,11 +137,18 @@ export function createAuth(db) {
     res.setHeader('Set-Cookie', cookieHeader('', { maxAgeSeconds: 0, secure: isSecure(req) }));
   }
 
-  /** Middleware : exige une session valide. */
+  /** Middleware : exige une session valide ; le compte est dans req.user. */
   function requireSession(req, res, next) {
-    if (currentSession(req)) return next();
+    const user = currentUser(req);
+    if (user) { req.user = user; return next(); }
     res.status(401).json({ error: 'Connexion requise', code: 'auth_required' });
   }
 
-  return { status, login, logout, requireSession };
+  /** Middleware : reserve aux administrateurs. */
+  function requireAdmin(req, res, next) {
+    if (req.user?.role === 'admin') return next();
+    res.status(403).json({ error: 'Réservé aux administrateurs', code: 'admin_required' });
+  }
+
+  return { status, login, logout, requireSession, requireAdmin, currentUser };
 }
